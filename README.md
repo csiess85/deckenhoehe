@@ -22,13 +22,32 @@ Interactive map showing real-time VFR flight conditions for all Austrian airport
 - [Node.js](https://nodejs.org) (any recent version)
 - A free OpenAIP API key from [openaip.net](https://www.openaip.net)
 
-### Running
+### Running locally
 
 ```bash
 node server.js
 ```
 
-Open [http://localhost:8080](http://localhost:8080) in your browser. On first load, enter your OpenAIP API key when prompted (stored in localStorage for future visits).
+Open [http://localhost:5556](http://localhost:5556) in your browser. On first load, enter your OpenAIP API key when prompted (stored in localStorage for future visits).
+
+Use `--verbose` (or `-v`) to log all requests to aviationweather.gov:
+
+```bash
+node server.js --verbose
+```
+
+### Running with Docker
+
+```bash
+docker build -t openaip .
+docker run -p 5556:5556 openaip
+```
+
+Open [http://localhost:5556](http://localhost:5556). To use a different port:
+
+```bash
+docker run -p 8080:8080 -e PORT=8080 openaip
+```
 
 ## Architecture
 
