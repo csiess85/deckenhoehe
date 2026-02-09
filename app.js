@@ -649,33 +649,24 @@ function updateRefreshInfo() {
   const horizonLabels = { 'current': 'Current conditions', '2h': '+2h forecast', '4h': '+4h forecast', '8h': '+8h forecast', '24h': '+24h forecast' };
   const horizonText = horizonLabels[selectedHorizon] || 'Current conditions';
 
-  if (!lastWeatherFetch) {
+  if (!lastApiFetch) {
     el.innerHTML = horizonText;
     return;
   }
 
-  const age = Date.now() - lastWeatherFetch.getTime();
-  const ageText = formatAge(age);
-  const stale = age > 10 * 60 * 1000; // > 10 min = stale styling
+  const apiAge = Date.now() - lastApiFetch.getTime();
+  const apiAgeText = formatAge(apiAge);
+  const stale = apiAge > 10 * 60 * 1000; // > 10 min = stale styling
 
-  let info = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX loaded: ${ageText}</span>`;
-
-  if (lastApiFetch) {
-    const apiAge = Date.now() - lastApiFetch.getTime();
-    const apiAgeText = formatAge(apiAge);
-    const apiTime = lastApiFetch.toLocaleTimeString();
-    info += ` | <span class="wx-api-time">Last API fetch: ${apiTime} (${apiAgeText})</span>`;
-  }
-
-  el.innerHTML = info;
+  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${apiAgeText}</span>`;
 }
 
 // ─── Fetch METAR Data ──────────────────────────────────────
 
 async function fetchMetar(icaoCodes, force = false) {
-  if (icaoCodes.length === 0) return { data: {}, fromApi: false };
+  if (icaoCodes.length === 0) return { data: {}, fetchTime: null };
   const results = {};
-  let anyFromApi = false;
+  let latestFetchTime = null;
   const batchSize = 40;
 
   for (let i = 0; i < icaoCodes.length; i += batchSize) {
@@ -684,21 +675,25 @@ async function fetchMetar(icaoCodes, force = false) {
       const url = `${METAR_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
       const res = await fetch(url);
       if (res.ok) {
-        if (res.headers.get('X-Cache') === 'MISS') anyFromApi = true;
+        const ft = res.headers.get('X-Fetch-Time');
+        if (ft) {
+          const t = new Date(ft);
+          if (!latestFetchTime || t > latestFetchTime) latestFetchTime = t;
+        }
         const data = await res.json();
         if (Array.isArray(data)) data.forEach(m => { if (m.icaoId) results[m.icaoId] = m; });
       }
     } catch (err) { console.warn('METAR fetch failed:', err); }
   }
-  return { data: results, fromApi: anyFromApi };
+  return { data: results, fetchTime: latestFetchTime };
 }
 
 // ─── Fetch TAF Data ────────────────────────────────────────
 
 async function fetchTaf(icaoCodes, force = false) {
-  if (icaoCodes.length === 0) return { data: {}, fromApi: false };
+  if (icaoCodes.length === 0) return { data: {}, fetchTime: null };
   const results = {};
-  let anyFromApi = false;
+  let latestFetchTime = null;
   const batchSize = 40;
 
   for (let i = 0; i < icaoCodes.length; i += batchSize) {
@@ -707,13 +702,17 @@ async function fetchTaf(icaoCodes, force = false) {
       const url = `${TAF_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
       const res = await fetch(url);
       if (res.ok) {
-        if (res.headers.get('X-Cache') === 'MISS') anyFromApi = true;
+        const ft = res.headers.get('X-Fetch-Time');
+        if (ft) {
+          const t = new Date(ft);
+          if (!latestFetchTime || t > latestFetchTime) latestFetchTime = t;
+        }
         const data = await res.json();
         if (Array.isArray(data)) data.forEach(t => { if (t.icaoId) results[t.icaoId] = t; });
       }
     } catch (err) { console.warn('TAF fetch failed:', err); }
   }
-  return { data: results, fromApi: anyFromApi };
+  return { data: results, fetchTime: latestFetchTime };
 }
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────
@@ -787,13 +786,11 @@ async function refreshWeather(force = false) {
     tafData = tafResult.data;
     lastWeatherFetch = new Date();
 
-    // Track when data was actually fetched from AWC API (not served from server cache)
-    if (metarResult.fromApi || tafResult.fromApi) {
-      lastApiFetch = new Date();
-    }
+    // Use the server-reported fetch time (when data was actually fetched from AWC API)
+    const serverFetchTime = metarResult.fetchTime || tafResult.fetchTime;
+    if (serverFetchTime) lastApiFetch = serverFetchTime;
 
-    const source = (metarResult.fromApi || tafResult.fromApi) ? 'from API' : 'from cache';
-    console.log(`Weather refresh (${source}): ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
+    console.log(`Weather refresh: ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs (API fetch: ${lastApiFetch ? lastApiFetch.toISOString() : 'unknown'})`);
     displayAirports();
   } catch (err) {
     console.warn('Weather refresh failed:', err);
@@ -838,10 +835,9 @@ async function loadAirports(key) {
     metarData = metarResult.data;
     tafData = tafResult.data;
     lastWeatherFetch = new Date();
-    if (metarResult.fromApi || tafResult.fromApi) {
-      lastApiFetch = new Date();
-    }
-    console.log(`Loaded ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
+    const serverFetchTime = metarResult.fetchTime || tafResult.fetchTime;
+    if (serverFetchTime) lastApiFetch = serverFetchTime;
+    console.log(`Loaded ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs (API fetch: ${lastApiFetch ? lastApiFetch.toISOString() : 'unknown'})`);
 
     displayAirports();
 
