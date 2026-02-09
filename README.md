@@ -36,17 +36,22 @@ Use `--verbose` (or `-v`) to log all requests to aviationweather.gov:
 node server.js --verbose
 ```
 
-### Running with Docker
+### Running with Docker Compose
 
 ```bash
-docker build -t openaip .
-docker run -p 5556:5556 openaip
+docker compose up
 ```
 
-Open [http://localhost:5556](http://localhost:5556). To use a different port:
+Open [http://localhost:5556](http://localhost:5556). To run in the background:
 
 ```bash
-docker run -p 8080:8080 -e PORT=8080 openaip
+docker compose up -d
+```
+
+To rebuild after code changes:
+
+```bash
+docker compose up --build
 ```
 
 ## Architecture
