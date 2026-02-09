@@ -8,7 +8,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 5556;
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
-const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // In-memory cache keyed by request URL
 const cache = new Map();

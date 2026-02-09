@@ -7,7 +7,7 @@ const TAF_PROXY = '/api/taf';
 const AUSTRIA_CENTER = [47.5, 13.5];
 const AUSTRIA_ZOOM = 8;
 const LOCAL_STORAGE_KEY = 'openaip_api_key';
-const METAR_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const METAR_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
 const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -50,6 +50,8 @@ let metarData = {};  // keyed by ICAO code
 let tafData = {};    // keyed by ICAO code
 let apiKey = '';
 let refreshTimer = null;
+let ageTimer = null;
+let lastWeatherFetch = null;
 let selectedHorizon = 'current'; // 'current', '2h', '4h', '8h', '24h'
 
 // ─── Map Init ──────────────────────────────────────────────
@@ -627,10 +629,36 @@ function displayAirports() {
   document.getElementById('statNodata').textContent = stats.nodata;
   document.getElementById('statsBar').style.display = 'flex';
 
-  const now = new Date();
+  updateRefreshInfo();
+}
+
+function formatAge(ms) {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return `${hr}h ${remMin}m ago`;
+}
+
+function updateRefreshInfo() {
+  const el = document.getElementById('refreshInfo');
+  if (!el) return;
   const horizonLabels = { 'current': 'Current conditions', '2h': '+2h forecast', '4h': '+4h forecast', '8h': '+8h forecast', '24h': '+24h forecast' };
-  document.getElementById('refreshInfo').textContent =
-    `${horizonLabels[selectedHorizon] || 'Current conditions'} | Updated: ${now.toLocaleTimeString()} | Auto-refresh every 5 min`;
+  const horizonText = horizonLabels[selectedHorizon] || 'Current conditions';
+
+  if (!lastWeatherFetch) {
+    el.innerHTML = horizonText;
+    return;
+  }
+
+  const fetchTime = lastWeatherFetch.toLocaleTimeString();
+  const age = Date.now() - lastWeatherFetch.getTime();
+  const ageText = formatAge(age);
+  const stale = age > 10 * 60 * 1000; // > 10 min = stale styling
+
+  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${fetchTime} (${ageText})</span>`;
 }
 
 // ─── Fetch METAR Data ──────────────────────────────────────
@@ -742,6 +770,7 @@ async function refreshWeather() {
     ]);
     metarData = newMetar;
     tafData = newTaf;
+    lastWeatherFetch = new Date();
     console.log(`Weather refresh: ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
     displayAirports();
   } catch (err) {
@@ -786,12 +815,17 @@ async function loadAirports(key) {
     ]);
     metarData = newMetar;
     tafData = newTaf;
+    lastWeatherFetch = new Date();
     console.log(`Loaded ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
 
     displayAirports();
 
     if (refreshTimer) clearInterval(refreshTimer);
     refreshTimer = setInterval(refreshWeather, METAR_REFRESH_INTERVAL);
+
+    // Update age display every 10 seconds
+    if (ageTimer) clearInterval(ageTimer);
+    ageTimer = setInterval(updateRefreshInfo, 10000);
 
   } catch (err) {
     console.error('Failed to load:', err);
@@ -837,6 +871,16 @@ function init() {
     e.target.classList.add('active');
     selectedHorizon = e.target.dataset.horizon;
     displayAirports();
+  });
+
+  // Refresh weather button
+  document.getElementById('refreshBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = 'Refreshing...';
+    await refreshWeather();
+    btn.disabled = false;
+    btn.textContent = '\u21BB Refresh WX';
   });
 }
 
@@ -1062,6 +1106,35 @@ style.textContent = `
   }
   .forecast-outlook-na {
     opacity: 0.35;
+  }
+
+  /* Refresh button & data age */
+  .refresh-btn {
+    padding: 4px 12px;
+    border: 1.5px solid #1a1a2e;
+    border-radius: 12px;
+    background: transparent;
+    color: #1a1a2e;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .refresh-btn:hover {
+    background: #1a1a2e;
+    color: white;
+  }
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+  .wx-timestamp {
+    color: #666;
+  }
+  .wx-stale {
+    color: #e67e22;
+    font-weight: 600;
   }
 
   /* Responsive header */
