@@ -1,0 +1,9 @@
+{
+  "name": "austria-vfr-map",
+  "version": "1.0.0",
+  "description": "Austria Airport VFR Status Map — live flight conditions on an interactive map",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

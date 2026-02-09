@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Austria Airport VFR Status Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    #map { width: 100%; height: 100vh; }
+
+    .leaflet-top { top: 54px !important; }
+
+    .header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1100;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .header h1 span {
+      color: #e63946;
+    }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      font-size: 12px;
+      color: #444;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .legend-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+
+    .legend-dot.vfr { background: #2ecc71; }
+    .legend-dot.mvfr { background: #3498db; }
+    .legend-dot.ifr { background: #e74c3c; }
+    .legend-dot.lifr { background: #9b59b6; }
+    .legend-dot.nodata { background: #95a5a6; }
+
+    .api-key-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .api-key-dialog {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 440px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+
+    .api-key-dialog h2 {
+      font-size: 20px;
+      margin-bottom: 8px;
+      color: #1a1a2e;
+    }
+
+    .api-key-dialog p {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .api-key-dialog input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .api-key-dialog input:focus {
+      border-color: #3498db;
+    }
+
+    .api-key-dialog button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 12px;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .api-key-dialog button:hover {
+      background: #2a2a4e;
+    }
+
+    .api-key-dialog .hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 12px;
+      text-align: center;
+    }
+
+    .api-key-dialog .hint a {
+      color: #3498db;
+    }
+
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,0.85);
+      z-index: 1500;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #ddd;
+      border-top-color: #1a1a2e;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text {
+      font-size: 15px;
+      color: #444;
+    }
+
+    .airport-popup {
+      min-width: 260px;
+    }
+
+    .airport-popup h3 {
+      font-size: 15px;
+      margin-bottom: 4px;
+      color: #1a1a2e;
+    }
+
+    .airport-popup .icao {
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .airport-popup .badge-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .airport-popup .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+    }
+
+    .airport-popup .badge.vfr { background: #2ecc71; }
+    .airport-popup .badge.mvfr { background: #3498db; }
+    .airport-popup .badge.ifr { background: #e74c3c; }
+    .airport-popup .badge.lifr { background: #9b59b6; }
+    .airport-popup .badge.nodata { background: #95a5a6; }
+    .airport-popup .badge.type-badge { background: #7f8c8d; }
+
+    .airport-popup .weather-section {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+
+    .airport-popup .weather-section .section-title {
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .airport-popup .metar-raw {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 10px;
+      color: #555;
+      word-break: break-all;
+      line-height: 1.4;
+      margin-top: 4px;
+    }
+
+    .airport-popup .detail-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      padding: 3px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .airport-popup .detail-row:last-child {
+      border-bottom: none;
+    }
+
+    .airport-popup .detail-label {
+      color: #888;
+    }
+
+    .airport-popup .detail-value {
+      color: #333;
+      font-weight: 500;
+    }
+
+    .airport-popup .freq-list {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    .airport-popup .freq-item {
+      padding: 2px 0;
+    }
+
+    .error-banner {
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1500;
+      background: #e74c3c;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      display: none;
+    }
+
+    .stats-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 10px 20px;
+      border-radius: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      display: flex;
+      gap: 16px;
+      font-size: 13px;
+      color: #444;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .stats-bar strong {
+      color: #1a1a2e;
+    }
+
+    .stats-bar .refresh-info {
+      color: #999;
+      font-size: 11px;
+      width: 100%;
+      text-align: center;
+      margin-top: 2px;
+    }
+
+    .attribution {
+      position: absolute;
+      bottom: 80px;
+      right: 10px;
+      z-index: 1000;
+      font-size: 11px;
+      color: #666;
+      background: rgba(255,255,255,0.8);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .attribution a {
+      color: #3498db;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1><span>Austria</span> Airport VFR Status Map</h1>
+    <div class="horizon-selector">
+      <button class="horizon-btn active" data-horizon="current">Now</button>
+      <button class="horizon-btn" data-horizon="2h">+2h</button>
+      <button class="horizon-btn" data-horizon="4h">+4h</button>
+      <button class="horizon-btn" data-horizon="8h">+8h</button>
+      <button class="horizon-btn" data-horizon="24h">+24h</button>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot vfr"></div> VFR</div>
+      <div class="legend-item"><div class="legend-dot mvfr"></div> MVFR</div>
+      <div class="legend-item"><div class="legend-dot ifr"></div> IFR</div>
+      <div class="legend-item"><div class="legend-dot lifr"></div> LIFR</div>
+      <div class="legend-item"><div class="legend-dot nodata"></div> No WX</div>
+    </div>
+    <a href="/help.html" class="help-btn" title="Help">?</a>
+  </div>
+
+  <div id="map"></div>
+
+  <div id="apiKeyOverlay" class="api-key-overlay" style="display:none;">
+    <div class="api-key-dialog">
+      <h2>OpenAIP API Key</h2>
+      <p>Enter your OpenAIP API key to fetch live airport data for Austria. Weather data (METAR) is fetched automatically from aviationweather.gov.</p>
+      <input type="text" id="apiKeyInput" placeholder="Your OpenAIP API key..." />
+      <button id="apiKeySubmit">Load Airports</button>
+      <div class="hint">Get a free key at <a href="https://www.openaip.net" target="_blank">openaip.net</a></div>
+    </div>
+  </div>
+
+  <div id="loadingOverlay" class="loading-overlay" style="display:none;">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Fetching airport data from OpenAIP...</div>
+  </div>
+
+  <div id="errorBanner" class="error-banner"></div>
+
+  <div id="statsBar" class="stats-bar" style="display:none;">
+    <div>Airports: <strong id="statTotal">0</strong></div>
+    <div style="color:#2ecc71">VFR: <strong id="statVfr">0</strong></div>
+    <div style="color:#3498db">MVFR: <strong id="statMvfr">0</strong></div>
+    <div style="color:#e74c3c">IFR: <strong id="statIfr">0</strong></div>
+    <div style="color:#9b59b6">LIFR: <strong id="statLifr">0</strong></div>
+    <div style="color:#95a5a6">No WX: <strong id="statNodata">0</strong></div>
+    <div class="refresh-info" id="refreshInfo"></div>
+  </div>
+
+  <div class="attribution">
+    Airports: <a href="https://www.openaip.net" target="_blank">OpenAIP</a> |
+    Weather: <a href="https://aviationweather.gov" target="_blank">AWC/NOAA</a>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Help — Austria Airport VFR Status Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f6fa;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .help-header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .help-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .help-header h1 span {
+      color: #e63946;
+    }
+
+    .back-btn {
+      padding: 6px 16px;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover {
+      background: #2a2a4e;
+    }
+
+    .help-content {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 32px 20px 60px;
+    }
+
+    h2 {
+      font-size: 20px;
+      color: #1a1a2e;
+      margin: 32px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    h2:first-child {
+      margin-top: 0;
+    }
+
+    h3 {
+      font-size: 16px;
+      color: #1a1a2e;
+      margin: 20px 0 8px;
+    }
+
+    p {
+      margin: 8px 0;
+      font-size: 14px;
+    }
+
+    ul {
+      margin: 8px 0 8px 24px;
+      font-size: 14px;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      background: #1a1a2e;
+      color: white;
+      font-weight: 600;
+    }
+
+    td {
+      padding: 6px 12px;
+      border-bottom: 1px solid #eee;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .cat-dot {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    .cat-dot.vfr { background: #2ecc71; }
+    .cat-dot.mvfr { background: #3498db; }
+    .cat-dot.ifr { background: #e74c3c; }
+    .cat-dot.lifr { background: #9b59b6; }
+    .cat-dot.nodata { background: #95a5a6; }
+
+    .note {
+      background: #eef3ff;
+      border-left: 4px solid #3498db;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      margin: 12px 0;
+      font-size: 13px;
+      color: #444;
+    }
+
+    .attribution {
+      margin-top: 40px;
+      padding-top: 16px;
+      border-top: 1px solid #ddd;
+      font-size: 12px;
+      color: #999;
+    }
+
+    .attribution a {
+      color: #3498db;
+    }
+
+    code {
+      background: #eee;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="help-header">
+    <h1><span>Help</span> — Austria Airport VFR Status Map</h1>
+    <a href="/" class="back-btn">Back to Map</a>
+  </div>
+
+  <div class="help-content">
+
+    <h2>What is this?</h2>
+    <p>An interactive map showing real-time VFR flight conditions for all Austrian airports. Each airport is displayed as a color-coded dot indicating its current flight category based on live METAR and TAF data.</p>
+
+    <h2>Map Markers</h2>
+    <p>Each dot on the map represents an airport. The color indicates the flight category:</p>
+    <table>
+      <tr><th>Color</th><th>Category</th><th>Meaning</th></tr>
+      <tr><td><span class="cat-dot vfr"></span> Green</td><td>VFR</td><td>Visual Flight Rules — good conditions</td></tr>
+      <tr><td><span class="cat-dot mvfr"></span> Blue</td><td>MVFR</td><td>Marginal VFR — reduced visibility or low ceiling</td></tr>
+      <tr><td><span class="cat-dot ifr"></span> Red</td><td>IFR</td><td>Instrument Flight Rules — poor conditions</td></tr>
+      <tr><td><span class="cat-dot lifr"></span> Purple</td><td>LIFR</td><td>Low IFR — very poor conditions</td></tr>
+      <tr><td><span class="cat-dot nodata"></span> Gray</td><td>No WX</td><td>No weather data available for this station</td></tr>
+    </table>
+    <p>The six major airports (LOWW, LOWS, LOWG, LOWI, LOWK, LOWL) are shown as larger dots with permanent labels.</p>
+
+    <h2>Airport Popups</h2>
+    <p>Click any airport marker to see detailed information:</p>
+    <ul>
+      <li><strong>Flight category badge</strong> and traffic type (VFR/IFR)</li>
+      <li><strong>Forecast outlook</strong> — four colored dots showing predicted conditions at +2h, +4h, +8h, and +24h</li>
+      <li><strong>Current weather (METAR)</strong> — visibility, ceiling, clouds, wind, temperature, dewpoint, QNH, and raw METAR</li>
+      <li><strong>Forecast (TAF)</strong> — visual timeline bar showing how conditions are expected to change, with detailed period breakdowns</li>
+      <li><strong>Airport info</strong> — type, elevation, position, runway dimensions and surface, PPR status, radio frequencies</li>
+    </ul>
+
+    <h2>Forecast Horizon Selector</h2>
+    <p>The buttons in the header bar let you switch between time horizons:</p>
+    <ul>
+      <li><strong>Now</strong> — current conditions from the latest METAR</li>
+      <li><strong>+2h, +4h, +8h, +24h</strong> — forecast conditions from the TAF at that many hours into the future</li>
+    </ul>
+    <p>When a forecast horizon is selected, all map markers change color to show what conditions are expected at that time. The stats bar at the bottom updates to match.</p>
+    <div class="note">Forecast horizons use <strong>worst-case analysis</strong>: if a TEMPO or PROB group overlaps the selected time, the worse of the base forecast and the temporary condition is shown. This is conservative by design — it shows the worst conditions you might encounter.</div>
+    <p>If an airport's TAF does not cover the selected time (e.g. +24h on a short TAF), the map falls back to the current METAR category.</p>
+
+    <h2>Flight Category Criteria</h2>
+    <p>Based on <a href="https://aviationweather.gov/gfa/help/" target="_blank">AWC standards</a>. The worse of ceiling and visibility determines the category:</p>
+    <table>
+      <tr><th>Category</th><th>Ceiling</th><th>Visibility</th></tr>
+      <tr><td><span class="cat-dot vfr"></span> VFR</td><td>&gt; 3,000 ft AGL</td><td>&gt; 5 SM</td></tr>
+      <tr><td><span class="cat-dot mvfr"></span> MVFR</td><td>1,000 &ndash; 3,000 ft</td><td>3 &ndash; 5 SM</td></tr>
+      <tr><td><span class="cat-dot ifr"></span> IFR</td><td>500 &ndash; 999 ft</td><td>1 &ndash; 2.99 SM</td></tr>
+      <tr><td><span class="cat-dot lifr"></span> LIFR</td><td>&lt; 500 ft</td><td>&lt; 1 SM</td></tr>
+    </table>
+
+    <h3>Cloud Cover and Ceiling</h3>
+    <p>The ceiling is the lowest cloud layer reported as broken or overcast. Not all cloud types count:</p>
+    <table>
+      <tr><th>Cover</th><th>Meaning</th><th>Defines Ceiling?</th></tr>
+      <tr><td><code>SKC</code></td><td>Sky Clear</td><td>No</td></tr>
+      <tr><td><code>CLR</code></td><td>Clear</td><td>No</td></tr>
+      <tr><td><code>FEW</code></td><td>Few (1/8 &ndash; 2/8)</td><td>No</td></tr>
+      <tr><td><code>SCT</code></td><td>Scattered (3/8 &ndash; 4/8)</td><td>No</td></tr>
+      <tr><td><code>BKN</code></td><td>Broken (5/8 &ndash; 7/8)</td><td>Yes</td></tr>
+      <tr><td><code>OVC</code></td><td>Overcast (8/8)</td><td>Yes</td></tr>
+      <tr><td><code>OVX</code></td><td>Obscured</td><td>Yes</td></tr>
+    </table>
+    <p>When multiple layers are reported, the app uses the first BKN, OVC, or OVX layer (lowest to highest) as the ceiling. If only FEW or SCT layers are present, there is no ceiling and the ceiling component defaults to VFR.</p>
+
+    <h2>TAF Timeline</h2>
+    <p>The TAF (Terminal Aerodrome Forecast) timeline in each popup shows:</p>
+    <ul>
+      <li><strong>Main bar</strong> — base forecast periods, color-coded by flight category</li>
+      <li><strong>Overlay bar</strong> — TEMPO, BECMG, and PROB change groups shown with hatched patterns</li>
+      <li><strong>Red triangle</strong> — marks the current time on the timeline</li>
+      <li><strong>Period details</strong> — each forecast period broken down with visibility, clouds, wind, and weather phenomena</li>
+    </ul>
+
+    <h2>Data Sources</h2>
+    <ul>
+      <li><strong>Airport data</strong> — <a href="https://www.openaip.net" target="_blank">OpenAIP</a> (fetched once on page load)</li>
+      <li><strong>METAR and TAF</strong> — <a href="https://aviationweather.gov" target="_blank">Aviation Weather Center (NOAA)</a> (refreshed every 5 minutes)</li>
+    </ul>
+
+    <h2>Stats Bar</h2>
+    <p>The bar at the bottom of the map shows how many airports fall into each flight category. It updates when you switch forecast horizons and when weather data auto-refreshes.</p>
+
+    <div class="attribution">
+      Airports: <a href="https://www.openaip.net" target="_blank">OpenAIP</a> |
+      Weather: <a href="https://aviationweather.gov" target="_blank">AWC/NOAA</a>
+    </div>
+
+  </div>
+
+</body>
+</html>
