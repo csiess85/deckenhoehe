@@ -206,24 +206,56 @@ function getDisplayCategory(icao) {
   return getForecastCategory(icao, targetTime) || getFlightCategory(metarData[icao]);
 }
 
+function getTrendForAirport(icao) {
+  const horizonChain = { 'current': '2h', '2h': '4h', '4h': '8h', '8h': '24h', '24h': null };
+  const nextHorizon = horizonChain[selectedHorizon];
+  if (!nextHorizon) return null;
+
+  const currentCat = getDisplayCategory(icao);
+  if (!currentCat) return null;
+
+  const hoursMap = { '2h': 2, '4h': 4, '8h': 8, '24h': 24 };
+  const nextTime = Math.floor(Date.now() / 1000) + hoursMap[nextHorizon] * 3600;
+  const nextCat = getForecastCategory(icao, nextTime) || getFlightCategory(metarData[icao]);
+  if (!nextCat) return null;
+
+  const currentSev = CATEGORY_SEVERITY[currentCat];
+  const nextSev = CATEGORY_SEVERITY[nextCat];
+  if (nextSev > currentSev) return 'deteriorating';
+  if (nextSev < currentSev) return 'improving';
+  return null;
+}
+
 // ─── Marker Icons ──────────────────────────────────────────
 
-function createAirportIcon(icao, isMajor) {
+function createAirportIcon(icao, isMajor, trend) {
   const color = getMarkerColor(icao);
   const size = isMajor ? 20 : 12;
   const border = isMajor ? 3 : 2;
   const shadow = isMajor ? '0 0 10px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.3)';
 
+  let arrowHtml = '';
+  if (trend === 'improving') {
+    const arrowSize = isMajor ? 10 : 7;
+    arrowHtml = `<div class="trend-arrow trend-improving" style="font-size:${arrowSize}px;">&#9650;</div>`;
+  } else if (trend === 'deteriorating') {
+    const arrowSize = isMajor ? 10 : 7;
+    arrowHtml = `<div class="trend-arrow trend-deteriorating" style="font-size:${arrowSize}px;">&#9660;</div>`;
+  }
+
+  const dotWidth = size + border * 2;
+  const arrowExtra = trend ? (isMajor ? 14 : 10) : 0;
+
   return L.divIcon({
     className: 'airport-marker',
-    html: `<div style="
+    html: `<div class="marker-wrapper"><div style="
       width: ${size}px; height: ${size}px; background: ${color};
       border: ${border}px solid white; border-radius: 50%;
       box-shadow: ${shadow};
       ${isMajor ? 'outline: 2px solid ' + color + '40;' : ''}
-    "></div>`,
-    iconSize: [size + border * 2, size + border * 2],
-    iconAnchor: [(size + border * 2) / 2, (size + border * 2) / 2],
+    "></div>${arrowHtml}</div>`,
+    iconSize: [dotWidth + arrowExtra, dotWidth],
+    iconAnchor: [dotWidth / 2, dotWidth / 2],
   });
 }
 
@@ -595,7 +627,8 @@ function displayAirports() {
 
     const icao = airport.icaoCode;
     const isMajor = MAJOR_AIRPORTS.has(icao);
-    const icon = createAirportIcon(icao, isMajor);
+    const trend = getTrendForAirport(icao);
+    const icon = createAirportIcon(icao, isMajor, trend);
 
     const marker = L.marker([coords[1], coords[0]], {
       icon, zIndexOffset: isMajor ? 1000 : 0,
@@ -927,6 +960,19 @@ style.textContent = `
     background: transparent !important;
     border: none !important;
   }
+  .marker-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+  }
+  .trend-arrow {
+    line-height: 1;
+    font-weight: 700;
+    text-shadow: 0 0 2px rgba(255,255,255,0.9), 0 0 1px rgba(255,255,255,0.9);
+    pointer-events: none;
+  }
+  .trend-improving { color: #27ae60; }
+  .trend-deteriorating { color: #c0392b; }
 
   /* TAF Timeline */
   .taf-section {
