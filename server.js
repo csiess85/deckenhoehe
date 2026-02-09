@@ -75,14 +75,21 @@ function proxyMetar(req, res, query) {
     return;
   }
 
+  const force = query.force === '1';
   stats.metar.total++;
   const cacheKey = `metar:${ids}`;
+
+  if (force) {
+    cache.delete(cacheKey);
+    if (VERBOSE) console.log(`[METAR] CACHE INVALIDATED (force refresh)`);
+  }
+
   const cached = getCached(cacheKey);
   if (cached) {
     stats.metar.cached++;
     logCall('metar', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
     if (VERBOSE) console.log(`[METAR] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
-    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
     res.end(cached.body);
     return;
   }
@@ -103,6 +110,9 @@ function proxyMetar(req, res, query) {
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
+        'X-Cache': 'MISS',
+        'X-Fetch-Time': new Date().toISOString(),
       });
       res.end(body);
     });
@@ -124,14 +134,21 @@ function proxyTaf(req, res, query) {
     return;
   }
 
+  const force = query.force === '1';
   stats.taf.total++;
   const cacheKey = `taf:${ids}`;
+
+  if (force) {
+    cache.delete(cacheKey);
+    if (VERBOSE) console.log(`[TAF]   CACHE INVALIDATED (force refresh)`);
+  }
+
   const cached = getCached(cacheKey);
   if (cached) {
     stats.taf.cached++;
     logCall('taf', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
     if (VERBOSE) console.log(`[TAF]   CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
-    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
     res.end(cached.body);
     return;
   }
@@ -152,6 +169,9 @@ function proxyTaf(req, res, query) {
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
+        'X-Cache': 'MISS',
+        'X-Fetch-Time': new Date().toISOString(),
       });
       res.end(body);
     });

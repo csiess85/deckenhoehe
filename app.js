@@ -52,6 +52,7 @@ let apiKey = '';
 let refreshTimer = null;
 let ageTimer = null;
 let lastWeatherFetch = null;
+let lastApiFetch = null; // last time data was actually fetched from AWC API (not from cache)
 let selectedHorizon = 'current'; // 'current', '2h', '4h', '8h', '24h'
 
 // ─── Map Init ──────────────────────────────────────────────
@@ -653,52 +654,66 @@ function updateRefreshInfo() {
     return;
   }
 
-  const fetchTime = lastWeatherFetch.toLocaleTimeString();
   const age = Date.now() - lastWeatherFetch.getTime();
   const ageText = formatAge(age);
   const stale = age > 10 * 60 * 1000; // > 10 min = stale styling
 
-  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${fetchTime} (${ageText})</span>`;
+  let info = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX loaded: ${ageText}</span>`;
+
+  if (lastApiFetch) {
+    const apiAge = Date.now() - lastApiFetch.getTime();
+    const apiAgeText = formatAge(apiAge);
+    const apiTime = lastApiFetch.toLocaleTimeString();
+    info += ` | <span class="wx-api-time">Last API fetch: ${apiTime} (${apiAgeText})</span>`;
+  }
+
+  el.innerHTML = info;
 }
 
 // ─── Fetch METAR Data ──────────────────────────────────────
 
-async function fetchMetar(icaoCodes) {
-  if (icaoCodes.length === 0) return {};
+async function fetchMetar(icaoCodes, force = false) {
+  if (icaoCodes.length === 0) return { data: {}, fromApi: false };
   const results = {};
+  let anyFromApi = false;
   const batchSize = 40;
 
   for (let i = 0; i < icaoCodes.length; i += batchSize) {
     const ids = icaoCodes.slice(i, i + batchSize).join(',');
     try {
-      const res = await fetch(`${METAR_PROXY}?ids=${encodeURIComponent(ids)}`);
+      const url = `${METAR_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
+      const res = await fetch(url);
       if (res.ok) {
+        if (res.headers.get('X-Cache') === 'MISS') anyFromApi = true;
         const data = await res.json();
         if (Array.isArray(data)) data.forEach(m => { if (m.icaoId) results[m.icaoId] = m; });
       }
     } catch (err) { console.warn('METAR fetch failed:', err); }
   }
-  return results;
+  return { data: results, fromApi: anyFromApi };
 }
 
 // ─── Fetch TAF Data ────────────────────────────────────────
 
-async function fetchTaf(icaoCodes) {
-  if (icaoCodes.length === 0) return {};
+async function fetchTaf(icaoCodes, force = false) {
+  if (icaoCodes.length === 0) return { data: {}, fromApi: false };
   const results = {};
+  let anyFromApi = false;
   const batchSize = 40;
 
   for (let i = 0; i < icaoCodes.length; i += batchSize) {
     const ids = icaoCodes.slice(i, i + batchSize).join(',');
     try {
-      const res = await fetch(`${TAF_PROXY}?ids=${encodeURIComponent(ids)}`);
+      const url = `${TAF_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
+      const res = await fetch(url);
       if (res.ok) {
+        if (res.headers.get('X-Cache') === 'MISS') anyFromApi = true;
         const data = await res.json();
         if (Array.isArray(data)) data.forEach(t => { if (t.icaoId) results[t.icaoId] = t; });
       }
     } catch (err) { console.warn('TAF fetch failed:', err); }
   }
-  return results;
+  return { data: results, fromApi: anyFromApi };
 }
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────
@@ -759,19 +774,26 @@ async function fetchAirports(key) {
 
 // ─── Refresh Weather Data ──────────────────────────────────
 
-async function refreshWeather() {
+async function refreshWeather(force = false) {
   const icaoCodes = airportsData.filter(a => a.icaoCode).map(a => a.icaoCode);
   if (icaoCodes.length === 0) return;
 
   try {
-    const [newMetar, newTaf] = await Promise.all([
-      fetchMetar(icaoCodes),
-      fetchTaf(icaoCodes),
+    const [metarResult, tafResult] = await Promise.all([
+      fetchMetar(icaoCodes, force),
+      fetchTaf(icaoCodes, force),
     ]);
-    metarData = newMetar;
-    tafData = newTaf;
+    metarData = metarResult.data;
+    tafData = tafResult.data;
     lastWeatherFetch = new Date();
-    console.log(`Weather refresh: ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
+
+    // Track when data was actually fetched from AWC API (not served from server cache)
+    if (metarResult.fromApi || tafResult.fromApi) {
+      lastApiFetch = new Date();
+    }
+
+    const source = (metarResult.fromApi || tafResult.fromApi) ? 'from API' : 'from cache';
+    console.log(`Weather refresh (${source}): ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
     displayAirports();
   } catch (err) {
     console.warn('Weather refresh failed:', err);
@@ -809,13 +831,16 @@ async function loadAirports(key) {
     loadingText.textContent = `Fetching METAR & TAF for ${airports.length} airports...`;
     const icaoCodes = airports.filter(a => a.icaoCode).map(a => a.icaoCode);
 
-    const [newMetar, newTaf] = await Promise.all([
+    const [metarResult, tafResult] = await Promise.all([
       fetchMetar(icaoCodes),
       fetchTaf(icaoCodes),
     ]);
-    metarData = newMetar;
-    tafData = newTaf;
+    metarData = metarResult.data;
+    tafData = tafResult.data;
     lastWeatherFetch = new Date();
+    if (metarResult.fromApi || tafResult.fromApi) {
+      lastApiFetch = new Date();
+    }
     console.log(`Loaded ${Object.keys(metarData).length} METARs, ${Object.keys(tafData).length} TAFs`);
 
     displayAirports();
@@ -873,12 +898,12 @@ function init() {
     displayAirports();
   });
 
-  // Refresh weather button
+  // Refresh weather button — forces a fresh fetch from AWC API (bypasses server cache)
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     const btn = document.getElementById('refreshBtn');
     btn.disabled = true;
-    btn.textContent = 'Refreshing...';
-    await refreshWeather();
+    btn.textContent = 'Fetching from API...';
+    await refreshWeather(true);
     btn.disabled = false;
     btn.textContent = '\u21BB Refresh WX';
   });
@@ -1135,6 +1160,10 @@ style.textContent = `
   .wx-stale {
     color: #e67e22;
     font-weight: 600;
+  }
+  .wx-api-time {
+    color: #27ae60;
+    font-weight: 500;
   }
 
   /* Responsive header */
