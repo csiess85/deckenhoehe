@@ -187,6 +187,16 @@
     </table>
     <p>The six major airports (LOWW, LOWS, LOWG, LOWI, LOWK, LOWL) are shown as larger dots with permanent labels.</p>
 
+    <h3>Trend Arrows</h3>
+    <p>Some markers display a small arrow next to the dot, indicating how conditions are expected to change at the next forecast horizon:</p>
+    <ul>
+      <li><strong style="color:#27ae60;">&#9650; Green arrow (up)</strong> — conditions are expected to <strong>improve</strong> (e.g. IFR → MVFR)</li>
+      <li><strong style="color:#c0392b;">&#9660; Red arrow (down)</strong> — conditions are expected to <strong>deteriorate</strong> (e.g. VFR → MVFR)</li>
+      <li><strong>No arrow</strong> — conditions are expected to remain <strong>stable</strong>, or no forecast data is available</li>
+    </ul>
+    <p>The trend compares the currently displayed horizon to the next step in the chain: Now → +2h → +4h → +8h → +24h. For example, when viewing "+2h", the arrow shows whether conditions at +4h will be better or worse. No arrows are shown at the +24h horizon since there is no further step to compare against.</p>
+    <div class="note">Trend arrows are derived from TAF data. Airports without a TAF will never show a trend arrow.</div>
+
     <h2>Airport Popups</h2>
     <p>Click any airport marker to see detailed information:</p>
     <ul>

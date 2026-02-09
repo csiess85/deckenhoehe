@@ -236,15 +236,15 @@ function createAirportIcon(icao, isMajor, trend) {
 
   let arrowHtml = '';
   if (trend === 'improving') {
-    const arrowSize = isMajor ? 10 : 7;
+    const arrowSize = isMajor ? 14 : 10;
     arrowHtml = `<div class="trend-arrow trend-improving" style="font-size:${arrowSize}px;">&#9650;</div>`;
   } else if (trend === 'deteriorating') {
-    const arrowSize = isMajor ? 10 : 7;
+    const arrowSize = isMajor ? 14 : 10;
     arrowHtml = `<div class="trend-arrow trend-deteriorating" style="font-size:${arrowSize}px;">&#9660;</div>`;
   }
 
   const dotWidth = size + border * 2;
-  const arrowExtra = trend ? (isMajor ? 14 : 10) : 0;
+  const arrowExtra = trend ? (isMajor ? 18 : 13) : 0;
 
   return L.divIcon({
     className: 'airport-marker',
