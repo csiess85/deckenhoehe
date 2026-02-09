@@ -8,6 +8,8 @@ const AUSTRIA_CENTER = [47.5, 13.5];
 const AUSTRIA_ZOOM = 8;
 const LOCAL_STORAGE_KEY = 'openaip_api_key';
 const METAR_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
+const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Airport type labels
 const AIRPORT_TYPES = {
@@ -673,7 +675,37 @@ async function fetchTaf(icaoCodes) {
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────
 
+function getCachedAirports() {
+  try {
+    const raw = localStorage.getItem(AIRPORT_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (!cached.time || !cached.data) return null;
+    if (Date.now() - cached.time > AIRPORT_CACHE_TTL) {
+      localStorage.removeItem(AIRPORT_CACHE_KEY);
+      return null;
+    }
+    console.log(`Airport cache hit (age ${Math.round((Date.now() - cached.time) / 60000)} min, ${cached.data.length} airports)`);
+    return cached.data;
+  } catch (e) {
+    localStorage.removeItem(AIRPORT_CACHE_KEY);
+    return null;
+  }
+}
+
+function setCachedAirports(airports) {
+  try {
+    localStorage.setItem(AIRPORT_CACHE_KEY, JSON.stringify({ data: airports, time: Date.now() }));
+  } catch (e) {
+    console.warn('Failed to cache airport data:', e.message);
+  }
+}
+
 async function fetchAirports(key) {
+  // Return cached airports if available
+  const cached = getCachedAirports();
+  if (cached) return cached;
+
   const allAirports = [];
   let page = 1;
   const limit = 100;
@@ -692,6 +724,8 @@ async function fetchAirports(key) {
     if (page >= totalPages || !Array.isArray(items) || items.length < limit) break;
     page++;
   }
+
+  setCachedAirports(allAirports);
   return allAirports;
 }
 

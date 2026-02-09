@@ -8,6 +8,24 @@ const path = require('path');
 
 const PORT = process.env.PORT || 5556;
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+// In-memory cache keyed by request URL
+const cache = new Map();
+
+function getCached(key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.time > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function setCache(key, statusCode, body) {
+  cache.set(key, { statusCode, body, time: Date.now() });
+}
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -44,6 +62,15 @@ function proxyMetar(req, res, query) {
     return;
   }
 
+  const cacheKey = `metar:${ids}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    if (VERBOSE) console.log(`[METAR] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(cached.body);
+    return;
+  }
+
   const awcUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
 
@@ -54,6 +81,7 @@ function proxyMetar(req, res, query) {
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       if (VERBOSE) console.log(`[METAR] <-- ${proxyRes.statusCode} (${body.length} bytes, ${Date.now() - startTime}ms)`);
+      if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
@@ -76,6 +104,15 @@ function proxyTaf(req, res, query) {
     return;
   }
 
+  const cacheKey = `taf:${ids}`;
+  const cached = getCached(cacheKey);
+  if (cached) {
+    if (VERBOSE) console.log(`[TAF]   CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(cached.body);
+    return;
+  }
+
   const awcUrl = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
 
@@ -86,6 +123,7 @@ function proxyTaf(req, res, query) {
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       if (VERBOSE) console.log(`[TAF]   <-- ${proxyRes.statusCode} (${body.length} bytes, ${Date.now() - startTime}ms)`);
+      if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
@@ -119,6 +157,7 @@ server.listen(PORT, () => {
   console.log(`  Server running at: http://localhost:${PORT}`);
   console.log(`  METAR proxy at:    http://localhost:${PORT}/api/metar?ids=LOWW`);
   console.log(`  TAF proxy at:      http://localhost:${PORT}/api/taf?ids=LOWW`);
+  console.log(`  Cache TTL:         ${CACHE_TTL / 1000}s`);
   console.log(`  Verbose mode:      ${VERBOSE ? 'ON' : 'OFF (use --verbose or -v)'}`);
   console.log(`\n  Press Ctrl+C to stop.\n`);
 });
