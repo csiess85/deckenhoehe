@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Stats — Austria Airport VFR Status Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f6fa;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .stats-header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .stats-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .stats-header h1 span { color: #e63946; }
+
+    .back-btn {
+      padding: 6px 16px;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+
+    .back-btn:hover { background: #2a2a4e; }
+
+    .content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    .card-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      margin-bottom: 4px;
+    }
+
+    .card-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+
+    .card-sub {
+      font-size: 12px;
+      color: #999;
+      margin-top: 2px;
+    }
+
+    h2 {
+      font-size: 16px;
+      color: #1a1a2e;
+      margin: 24px 0 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #1a1a2e;
+      color: white;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    td {
+      padding: 7px 12px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .tag-cached {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .tag-api {
+      background: #e3f2fd;
+      color: #1565c0;
+    }
+
+    .tag-error {
+      background: #fbe9e7;
+      color: #c62828;
+    }
+
+    .cache-section {
+      margin-top: 24px;
+    }
+
+    .empty {
+      text-align: center;
+      color: #999;
+      padding: 20px;
+      font-size: 13px;
+    }
+
+    .auto-refresh {
+      font-size: 11px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="stats-header">
+    <h1><span>API Stats</span> — Austria Airport VFR Status Map</h1>
+    <div>
+      <span class="auto-refresh" id="autoRefresh"></span>
+      <a href="/" class="back-btn">Back to Map</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="cards" id="cards"></div>
+
+    <h2>Active Cache Entries</h2>
+    <table id="cacheTable">
+      <thead><tr><th>Key</th><th>Age</th><th>Size</th></tr></thead>
+      <tbody id="cacheBody"></tbody>
+    </table>
+
+    <h2>METAR Request Log</h2>
+    <table id="metarTable">
+      <thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
+      <tbody id="metarBody"></tbody>
+    </table>
+
+    <h2>TAF Request Log</h2>
+    <table id="tafTable">
+      <thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
+      <tbody id="tafBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    function fmtDuration(sec) {
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm ' + (sec % 60) + 's';
+      const hr = Math.floor(min / 60);
+      return hr + 'h ' + (min % 60) + 'm';
+    }
+
+    function fmtBytes(b) {
+      if (b < 1024) return b + ' B';
+      return (b / 1024).toFixed(1) + ' KB';
+    }
+
+    function fmtTime(ts) {
+      return new Date(ts).toLocaleTimeString();
+    }
+
+    function renderLogRow(entry) {
+      const time = fmtTime(entry.time);
+      if (entry.cached) {
+        return `<tr><td>${time}</td><td><span class="tag tag-cached">CACHE HIT</span></td><td>Served from cache (age ${entry.age}s)</td></tr>`;
+      }
+      if (entry.error) {
+        return `<tr><td>${time}</td><td><span class="tag tag-error">ERROR</span></td><td>${entry.error} (${entry.duration}ms)</td></tr>`;
+      }
+      return `<tr><td>${time}</td><td><span class="tag tag-api">API CALL</span></td><td>HTTP ${entry.status} &middot; ${fmtBytes(entry.bytes)} &middot; ${entry.duration}ms</td></tr>`;
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+
+        // Cards
+        const metarApiCalls = data.metar.total - data.metar.cached;
+        const tafApiCalls = data.taf.total - data.taf.cached;
+        const totalRequests = data.metar.total + data.taf.total;
+        const totalCached = data.metar.cached + data.taf.cached;
+        const hitRate = totalRequests > 0 ? Math.round((totalCached / totalRequests) * 100) : 0;
+
+        document.getElementById('cards').innerHTML = `
+          <div class="card">
+            <div class="card-label">Server Uptime</div>
+            <div class="card-value">${fmtDuration(data.uptime)}</div>
+            <div class="card-sub">Cache TTL: ${data.cacheTTL}s</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Total Requests</div>
+            <div class="card-value">${totalRequests}</div>
+            <div class="card-sub">METAR: ${data.metar.total} &middot; TAF: ${data.taf.total}</div>
+          </div>
+          <div class="card">
+            <div class="card-label">API Calls (to AWC)</div>
+            <div class="card-value">${metarApiCalls + tafApiCalls}</div>
+            <div class="card-sub">METAR: ${metarApiCalls} &middot; TAF: ${tafApiCalls}</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Cache Hit Rate</div>
+            <div class="card-value">${hitRate}%</div>
+            <div class="card-sub">${totalCached} served from cache</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Errors</div>
+            <div class="card-value">${data.metar.errors + data.taf.errors}</div>
+            <div class="card-sub">METAR: ${data.metar.errors} &middot; TAF: ${data.taf.errors}</div>
+          </div>
+        `;
+
+        // Cache entries
+        const cacheBody = document.getElementById('cacheBody');
+        if (data.cache.length === 0) {
+          cacheBody.innerHTML = '<tr><td colspan="3" class="empty">No active cache entries</td></tr>';
+        } else {
+          cacheBody.innerHTML = data.cache.map(e =>
+            `<tr><td>${e.key}</td><td>${e.age}s</td><td>${fmtBytes(e.bytes)}</td></tr>`
+          ).join('');
+        }
+
+        // METAR log
+        const metarBody = document.getElementById('metarBody');
+        if (data.metar.log.length === 0) {
+          metarBody.innerHTML = '<tr><td colspan="3" class="empty">No METAR requests yet</td></tr>';
+        } else {
+          metarBody.innerHTML = data.metar.log.map(renderLogRow).join('');
+        }
+
+        // TAF log
+        const tafBody = document.getElementById('tafBody');
+        if (data.taf.log.length === 0) {
+          tafBody.innerHTML = '<tr><td colspan="3" class="empty">No TAF requests yet</td></tr>';
+        } else {
+          tafBody.innerHTML = data.taf.log.map(renderLogRow).join('');
+        }
+
+        document.getElementById('autoRefresh').textContent = 'Auto-refreshes every 5s';
+      } catch (err) {
+        document.getElementById('cards').innerHTML = '<div class="card"><div class="card-label">Error</div><div class="card-value" style="font-size:16px;color:#e74c3c">Failed to load stats</div></div>';
+      }
+    }
+
+    loadStats();
+    setInterval(loadStats, 5000);
+  </script>
+
+</body>
+</html>
