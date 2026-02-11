@@ -1,15 +1,13 @@
 // Austria Airport VFR Status Map
 // Uses OpenAIP API v2 for airport data + aviationweather.gov METAR/TAF for live weather
 
-const OPENAIP_API_BASE = 'https://api.core.openaip.net/api';
+const AIRPORTS_PROXY = '/api/airports';
 const METAR_PROXY = '/api/metar';
 const TAF_PROXY = '/api/taf';
 const AUSTRIA_CENTER = [47.5, 13.5];
 const AUSTRIA_ZOOM = 8;
 const LOCAL_STORAGE_KEY = 'openaip_api_key';
 const METAR_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
-const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
-const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Airport type labels
 const AIRPORT_TYPES = {
@@ -666,6 +664,14 @@ function displayAirports() {
   updateRefreshInfo();
 }
 
+function formatTimestamp(date) {
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${day}.${month}. ${hours}:${minutes}Z`;
+}
+
 function formatAge(ms) {
   const sec = Math.floor(ms / 1000);
   if (sec < 60) return `${sec}s ago`;
@@ -688,10 +694,11 @@ function updateRefreshInfo() {
   }
 
   const apiAge = Date.now() - lastApiFetch.getTime();
-  const apiAgeText = formatAge(apiAge);
+  const timestampText = formatTimestamp(lastApiFetch);
+  const ageText = formatAge(apiAge);
   const stale = apiAge > 10 * 60 * 1000; // > 10 min = stale styling
 
-  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${apiAgeText}</span>`;
+  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${timestampText} (${ageText})</span>`;
 }
 
 // ─── Fetch METAR Data ──────────────────────────────────────
@@ -750,47 +757,17 @@ async function fetchTaf(icaoCodes, force = false) {
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────
 
-function getCachedAirports() {
-  try {
-    const raw = localStorage.getItem(AIRPORT_CACHE_KEY);
-    if (!raw) return null;
-    const cached = JSON.parse(raw);
-    if (!cached.time || !cached.data) return null;
-    if (Date.now() - cached.time > AIRPORT_CACHE_TTL) {
-      localStorage.removeItem(AIRPORT_CACHE_KEY);
-      return null;
-    }
-    console.log(`Airport cache hit (age ${Math.round((Date.now() - cached.time) / 60000)} min, ${cached.data.length} airports)`);
-    return cached.data;
-  } catch (e) {
-    localStorage.removeItem(AIRPORT_CACHE_KEY);
-    return null;
-  }
-}
-
-function setCachedAirports(airports) {
-  try {
-    localStorage.setItem(AIRPORT_CACHE_KEY, JSON.stringify({ data: airports, time: Date.now() }));
-  } catch (e) {
-    console.warn('Failed to cache airport data:', e.message);
-  }
-}
-
 async function fetchAirports(key) {
-  // Return cached airports if available
-  const cached = getCachedAirports();
-  if (cached) return cached;
-
   const allAirports = [];
   let page = 1;
   const limit = 100;
 
   while (true) {
-    const url = `${OPENAIP_API_BASE}/airports?country=AT&page=${page}&limit=${limit}`;
+    const url = `${AIRPORTS_PROXY}?country=AT&page=${page}&limit=${limit}`;
     const response = await fetch(url, { headers: { 'x-openaip-api-key': key } });
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`OpenAIP API failed (${response.status}): ${text}`);
+      throw new Error(`Airport API failed (${response.status}): ${text}`);
     }
     const data = await response.json();
     const items = data.items || data;
@@ -800,7 +777,6 @@ async function fetchAirports(key) {
     page++;
   }
 
-  setCachedAirports(allAirports);
   return allAirports;
 }
 
