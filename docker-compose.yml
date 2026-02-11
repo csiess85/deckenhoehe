@@ -5,4 +5,9 @@ services:
       - "5556:5556"
     environment:
       - PORT=5556
+    volumes:
+      - app-data:/app/data
     restart: unless-stopped
+
+volumes:
+  app-data:

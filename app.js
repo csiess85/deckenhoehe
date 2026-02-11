@@ -1,12 +1,11 @@
 // Austria Airport VFR Status Map
 // Uses OpenAIP API v2 for airport data + aviationweather.gov METAR/TAF for live weather
 
-const OPENAIP_API_BASE = 'https://api.core.openaip.net/api';
 const METAR_PROXY = '/api/metar';
 const TAF_PROXY = '/api/taf';
+const AIRPORTS_PROXY = '/api/airports';
 const AUSTRIA_CENTER = [47.5, 13.5];
 const AUSTRIA_ZOOM = 8;
-const LOCAL_STORAGE_KEY = 'openaip_api_key';
 const METAR_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
 const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -48,7 +47,6 @@ let airportMarkers = [];
 let airportsData = [];
 let metarData = {};  // keyed by ICAO code
 let tafData = {};    // keyed by ICAO code
-let apiKey = '';
 let refreshTimer = null;
 let ageTimer = null;
 let lastWeatherFetch = null;
@@ -776,7 +774,7 @@ function setCachedAirports(airports) {
   }
 }
 
-async function fetchAirports(key) {
+async function fetchAirports() {
   // Return cached airports if available
   const cached = getCachedAirports();
   if (cached) return cached;
@@ -786,11 +784,12 @@ async function fetchAirports(key) {
   const limit = 100;
 
   while (true) {
-    const url = `${OPENAIP_API_BASE}/airports?country=AT&page=${page}&limit=${limit}`;
-    const response = await fetch(url, { headers: { 'x-openaip-api-key': key } });
+    const url = `${AIRPORTS_PROXY}?country=AT&page=${page}&limit=${limit}`;
+    const response = await fetch(url);
+    if (response.status === 401) throw new Error('NO_API_KEY');
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`OpenAIP API failed (${response.status}): ${text}`);
+      throw new Error(`Airport fetch failed (${response.status}): ${text}`);
     }
     const data = await response.json();
     const items = data.items || data;
@@ -839,24 +838,22 @@ function showError(message) {
   setTimeout(() => { banner.style.display = 'none'; }, 8000);
 }
 
-async function loadAirports(key) {
+async function loadAirports() {
   const loading = document.getElementById('loadingOverlay');
   const loadingText = document.getElementById('loadingText');
   loading.style.display = 'flex';
 
   try {
     loadingText.textContent = 'Fetching airports from OpenAIP...';
-    const airports = await fetchAirports(key);
+    const airports = await fetchAirports();
 
     if (airports.length === 0) {
-      showError('No airports found. Check your API key and try again.');
+      showError('No airports found.');
       loading.style.display = 'none';
       return;
     }
 
     airportsData = airports;
-    apiKey = key;
-    localStorage.setItem(LOCAL_STORAGE_KEY, key);
 
     loadingText.textContent = `Fetching METAR & TAF for ${airports.length} airports...`;
     const icaoCodes = airports.filter(a => a.icaoCode).map(a => a.icaoCode);
@@ -883,9 +880,12 @@ async function loadAirports(key) {
 
   } catch (err) {
     console.error('Failed to load:', err);
-    showError(`Failed to load airports: ${err.message}`);
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
-    document.getElementById('apiKeyOverlay').style.display = 'flex';
+    if (err.message === 'NO_API_KEY') {
+      document.getElementById('apiKeyOverlay').style.display = 'flex';
+    } else {
+      showError(`Failed to load airports: ${err.message}`);
+      document.getElementById('apiKeyOverlay').style.display = 'flex';
+    }
   } finally {
     loading.style.display = 'none';
   }
@@ -893,26 +893,75 @@ async function loadAirports(key) {
 
 // ─── Init ──────────────────────────────────────────────────
 
-function init() {
+async function init() {
   initMap();
 
   const overlay = document.getElementById('apiKeyOverlay');
   const input = document.getElementById('apiKeyInput');
   const submit = document.getElementById('apiKeySubmit');
 
-  const storedKey = localStorage.getItem(LOCAL_STORAGE_KEY);
-  if (storedKey) {
+  // Check if server has an API key configured
+  let serverHasKey = false;
+  try {
+    const res = await fetch('/api/config');
+    const config = await res.json();
+    serverHasKey = config.hasKey;
+  } catch (e) { /* server unreachable */ }
+
+  // One-time migration from localStorage to server
+  const legacyKey = localStorage.getItem('openaip_api_key');
+  if (legacyKey && !serverHasKey) {
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: legacyKey }),
+      });
+      const result = await res.json();
+      if (result.ok) {
+        localStorage.removeItem('openaip_api_key');
+        serverHasKey = true;
+      }
+    } catch (e) { /* migration failed, user will re-enter */ }
+  }
+  if (legacyKey && serverHasKey) localStorage.removeItem('openaip_api_key');
+
+  if (serverHasKey) {
     overlay.style.display = 'none';
-    loadAirports(storedKey);
+    loadAirports();
   } else {
     overlay.style.display = 'flex';
   }
 
-  submit.addEventListener('click', () => {
+  submit.addEventListener('click', async () => {
     const key = input.value.trim();
     if (!key) { input.style.borderColor = '#e74c3c'; return; }
-    overlay.style.display = 'none';
-    loadAirports(key);
+
+    submit.disabled = true;
+    submit.textContent = 'Validating...';
+
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key }),
+      });
+      const result = await res.json();
+
+      if (result.ok) {
+        overlay.style.display = 'none';
+        localStorage.removeItem(AIRPORT_CACHE_KEY);
+        loadAirports();
+      } else {
+        showError(result.error || 'Invalid API key');
+        input.style.borderColor = '#e74c3c';
+      }
+    } catch (e) {
+      showError('Failed to save API key: ' + e.message);
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Load Airports';
+    }
   });
 
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit.click(); });
