@@ -7,6 +7,8 @@ const AIRPORTS_PROXY = '/api/airports';
 const AUSTRIA_CENTER = [47.5, 13.5];
 const AUSTRIA_ZOOM = 8;
 const METAR_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
+const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
+const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Airport type labels
 const AIRPORT_TYPES = {
@@ -808,6 +810,7 @@ async function fetchAirports() {
     page++;
   }
 
+  setCachedAirports(allAirports);
   return allAirports;
 }
 
