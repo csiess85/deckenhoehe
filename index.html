@@ -187,6 +187,41 @@
       margin-bottom: 8px;
     }
 
+    @media (max-width: 480px) {
+      .airport-popup {
+        min-width: unset;
+      }
+      .airport-popup h3 {
+        font-size: 14px;
+      }
+      .airport-popup .icao {
+        font-size: 11px;
+        margin-bottom: 5px;
+      }
+      .airport-popup .badge {
+        font-size: 10px;
+        padding: 2px 7px;
+      }
+      .airport-popup .detail-row {
+        font-size: 11px;
+        padding: 2px 0;
+      }
+      .airport-popup .weather-section {
+        padding: 6px 8px;
+        margin: 5px 0;
+        font-size: 11px;
+      }
+      .airport-popup .weather-section .section-title {
+        font-size: 11px;
+      }
+      .airport-popup .metar-raw {
+        font-size: 9px;
+      }
+      .airport-popup .freq-list {
+        font-size: 11px;
+      }
+    }
+
     .airport-popup .badge-row {
       display: flex;
       gap: 6px;
@@ -311,6 +346,20 @@
       margin-top: 2px;
     }
 
+    @media (max-width: 480px) {
+      .stats-bar {
+        bottom: 8px;
+        padding: 6px 12px;
+        gap: 8px;
+        font-size: 11px;
+        border-radius: 14px;
+        max-width: 95vw;
+      }
+      .stats-bar .refresh-info {
+        font-size: 10px;
+      }
+    }
+
     .attribution {
       position: absolute;
       bottom: 80px;
@@ -355,7 +404,7 @@
   <div id="apiKeyOverlay" class="api-key-overlay" style="display:none;">
     <div class="api-key-dialog">
       <h2>OpenAIP API Key</h2>
-      <p>Enter your OpenAIP API key to fetch live airport data for Austria. Weather data (METAR) is fetched automatically from aviationweather.gov.</p>
+      <p>Enter your OpenAIP API key. The key will be stored on the server and used to fetch airport data. Weather data (METAR/TAF) is fetched automatically from aviationweather.gov.</p>
       <input type="text" id="apiKeyInput" placeholder="Your OpenAIP API key..." />
       <button id="apiKeySubmit">Load Airports</button>
       <div class="hint">Get a free key at <a href="https://www.openaip.net" target="_blank">openaip.net</a></div>
