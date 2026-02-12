@@ -632,8 +632,10 @@ function displayAirports() {
       icon, zIndexOffset: isMajor ? 1000 : 0,
     });
 
+    const isMobile = window.innerWidth <= 480;
     marker.bindPopup(() => buildPopupContent(airport), {
-      maxWidth: 380, className: 'airport-popup-container',
+      maxWidth: isMobile ? 280 : 380,
+      className: 'airport-popup-container',
       autoPanPaddingTopLeft: L.point(10, 60),
     });
 
@@ -1272,6 +1274,54 @@ style.textContent = `
     .horizon-selector { order: 2; }
     .legend { order: 3; font-size: 11px; gap: 8px; }
     .horizon-btn { padding: 4px 8px; font-size: 11px; }
+  }
+
+  /* Mobile popup sizing */
+  @media (max-width: 480px) {
+    .airport-popup-container .leaflet-popup-content-wrapper {
+      border-radius: 10px;
+    }
+    .airport-popup-container .leaflet-popup-content {
+      margin: 8px 10px;
+      max-height: 55vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .taf-section {
+      padding: 6px 8px;
+      font-size: 11px;
+    }
+    .taf-period-header {
+      font-size: 10px;
+    }
+    .taf-period-details {
+      font-size: 9px;
+    }
+    .taf-change-badge {
+      font-size: 8px;
+      padding: 1px 4px;
+    }
+    .taf-period-time {
+      font-size: 9px;
+    }
+    .forecast-outlook {
+      padding: 6px 8px;
+      margin: 4px 0;
+    }
+    .forecast-outlook-title {
+      font-size: 10px;
+      margin-bottom: 4px;
+    }
+    .forecast-outlook-dot {
+      width: 16px;
+      height: 16px;
+    }
+    .forecast-outlook-label {
+      font-size: 9px;
+    }
+    .forecast-outlook-cat {
+      font-size: 8px;
+    }
   }
 `;
 document.head.appendChild(style);
