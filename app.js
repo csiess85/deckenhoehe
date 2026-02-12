@@ -1285,6 +1285,16 @@ style.textContent = `
     .horizon-btn { padding: 4px 8px; font-size: 11px; }
   }
 
+  /* Scrollable popup content */
+  .airport-popup-container .leaflet-popup-content {
+    max-height: 60vh;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .airport-popup-container .leaflet-popup-content .airport-popup {
+    padding-right: 8px;
+  }
+
   /* Mobile popup sizing */
   @media (max-width: 768px) {
     .airport-popup-container .leaflet-popup-content-wrapper {
@@ -1293,9 +1303,7 @@ style.textContent = `
     .airport-popup-container .leaflet-popup-content {
       margin: 8px 10px;
       max-height: 55vh;
-      overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      scrollbar-gutter: stable;
     }
     .airport-popup-container .leaflet-popup-content .airport-popup {
       padding-right: 10px;
