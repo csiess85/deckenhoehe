@@ -242,24 +242,16 @@ function proxyTaf(req, res, query) {
 }
 
 function proxyAirports(req, res, query) {
-<<<<<<< HEAD
-  const apiKey = req.headers['x-openaip-api-key'];
-  if (!apiKey) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Missing x-openaip-api-key header' }));
-=======
   const apiKey = getApiKey();
   if (!apiKey) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'No API key configured' }));
->>>>>>> feature/trend-arrows
     return;
   }
 
   const country = query.country || 'AT';
   const page = query.page || '1';
   const limit = query.limit || '100';
-<<<<<<< HEAD
   const force = query.force === '1';
 
   stats.airports.total++;
@@ -276,31 +268,13 @@ function proxyAirports(req, res, query) {
     logCall('airports', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
     if (VERBOSE) console.log(`[AIRPORTS] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
     res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
-=======
-  const cacheKey = `airports:${country}:${page}:${limit}`;
-
-  const cached = getCached(cacheKey);
-  if (cached) {
-    if (VERBOSE) console.log(`[AIRPORTS] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
-    res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'X-Cache': 'HIT' });
->>>>>>> feature/trend-arrows
     res.end(cached.body);
     return;
   }
 
-<<<<<<< HEAD
   const openaipUrl = `https://api.core.openaip.net/api/airports?country=${encodeURIComponent(country)}&page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`;
   const startTime = Date.now();
 
-  if (VERBOSE) console.log(`[AIRPORTS] --> GET ${openaipUrl}`);
-
-  const options = new URL(openaipUrl);
-  options.headers = { 'x-openaip-api-key': apiKey };
-
-  https.get(options, (proxyRes) => {
-=======
-  const openaipUrl = `https://api.core.openaip.net/api/airports?country=${encodeURIComponent(country)}&page=${page}&limit=${limit}`;
-  const startTime = Date.now();
   if (VERBOSE) console.log(`[AIRPORTS] --> GET ${openaipUrl}`);
 
   const parsed = new URL(openaipUrl);
@@ -309,14 +283,12 @@ function proxyAirports(req, res, query) {
     path: parsed.pathname + parsed.search,
     headers: { 'x-openaip-api-key': apiKey },
   }, (proxyRes) => {
->>>>>>> feature/trend-arrows
     let body = '';
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
       if (VERBOSE) console.log(`[AIRPORTS] <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
       if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
-<<<<<<< HEAD
       logCall('airports', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
@@ -330,12 +302,6 @@ function proxyAirports(req, res, query) {
   }).on('error', (err) => {
     stats.airports.errors++;
     logCall('airports', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
-=======
-      res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json', 'X-Cache': 'MISS' });
-      res.end(body);
-    });
-  }).on('error', (err) => {
->>>>>>> feature/trend-arrows
     if (VERBOSE) console.log(`[AIRPORTS] <-- ERROR ${err.message} (${Date.now() - startTime}ms)`);
     console.error('Airports proxy error:', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -343,8 +309,6 @@ function proxyAirports(req, res, query) {
   });
 }
 
-<<<<<<< HEAD
-=======
 function handleConfigGet(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ hasKey: !!getApiKey() }));
@@ -399,7 +363,6 @@ function handleConfigPost(req, res) {
   });
 }
 
->>>>>>> feature/trend-arrows
 const server = http.createServer((req, res) => {
   const parsed = new URL(req.url, `http://localhost:${PORT}`);
   const query = Object.fromEntries(parsed.searchParams);
@@ -410,13 +373,10 @@ const server = http.createServer((req, res) => {
     proxyTaf(req, res, query);
   } else if (parsed.pathname === '/api/airports') {
     proxyAirports(req, res, query);
-<<<<<<< HEAD
-=======
   } else if (parsed.pathname === '/api/config' && req.method === 'GET') {
     handleConfigGet(req, res);
   } else if (parsed.pathname === '/api/config' && req.method === 'POST') {
     handleConfigPost(req, res);
->>>>>>> feature/trend-arrows
   } else if (parsed.pathname === '/api/stats') {
     const cacheEntries = [];
     for (const [key, entry] of cache) {
