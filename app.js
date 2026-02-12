@@ -1,10 +1,6 @@
 // Austria Airport VFR Status Map
 // Uses OpenAIP API v2 for airport data + aviationweather.gov METAR/TAF for live weather
 
-<<<<<<< HEAD
-const AIRPORTS_PROXY = '/api/airports';
-=======
->>>>>>> feature/trend-arrows
 const METAR_PROXY = '/api/metar';
 const TAF_PROXY = '/api/taf';
 const AIRPORTS_PROXY = '/api/airports';
@@ -761,9 +757,6 @@ async function fetchTaf(icaoCodes, force = false) {
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────
 
-<<<<<<< HEAD
-async function fetchAirports(key) {
-=======
 function getCachedAirports() {
   try {
     const raw = localStorage.getItem(AIRPORT_CACHE_KEY);
@@ -795,25 +788,17 @@ async function fetchAirports() {
   const cached = getCachedAirports();
   if (cached) return cached;
 
->>>>>>> feature/trend-arrows
   const allAirports = [];
   let page = 1;
   const limit = 100;
 
   while (true) {
     const url = `${AIRPORTS_PROXY}?country=AT&page=${page}&limit=${limit}`;
-<<<<<<< HEAD
-    const response = await fetch(url, { headers: { 'x-openaip-api-key': key } });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Airport API failed (${response.status}): ${text}`);
-=======
     const response = await fetch(url);
     if (response.status === 401) throw new Error('NO_API_KEY');
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`Airport fetch failed (${response.status}): ${text}`);
->>>>>>> feature/trend-arrows
     }
     const data = await response.json();
     const items = data.items || data;
@@ -1304,6 +1289,7 @@ style.textContent = `
     }
     .airport-popup-container .leaflet-popup-content {
       margin: 8px 10px;
+      padding-right: 6px;
       max-height: 55vh;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
