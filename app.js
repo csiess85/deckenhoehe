@@ -630,7 +630,7 @@ function displayAirports() {
       icon, zIndexOffset: isMajor ? 1000 : 0,
     });
 
-    const isMobile = window.innerWidth <= 480;
+    const isMobile = window.innerWidth <= 768;
     marker.bindPopup(() => buildPopupContent(airport), {
       maxWidth: isMobile ? 280 : 380,
       className: 'airport-popup-container',
@@ -1283,16 +1283,19 @@ style.textContent = `
   }
 
   /* Mobile popup sizing */
-  @media (max-width: 480px) {
+  @media (max-width: 768px) {
     .airport-popup-container .leaflet-popup-content-wrapper {
       border-radius: 10px;
     }
     .airport-popup-container .leaflet-popup-content {
       margin: 8px 10px;
-      padding-right: 6px;
       max-height: 55vh;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
+      scrollbar-gutter: stable;
+    }
+    .airport-popup-container .leaflet-popup-content .airport-popup {
+      padding-right: 10px;
     }
     .taf-section {
       padding: 6px 8px;
