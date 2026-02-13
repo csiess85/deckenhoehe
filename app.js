@@ -1112,8 +1112,9 @@ style.textContent = `
   /* Gust Warning */
   .gust-indicator {
     position: absolute;
-    top: -8px;
-    right: -8px;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
     width: 16px;
     height: 16px;
     background: #e67e22;
@@ -1129,8 +1130,7 @@ style.textContent = `
     z-index: 10;
   }
   .gust-indicator.gust-major {
-    top: -10px;
-    right: -10px;
+    bottom: -12px;
     width: 19px;
     height: 19px;
     font-size: 12px;
