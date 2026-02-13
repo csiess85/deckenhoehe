@@ -349,14 +349,22 @@
 
     @media (max-width: 768px) {
       .stats-bar {
-        bottom: 8px;
-        padding: 6px 12px;
-        gap: 8px;
-        font-size: 11px;
-        border-radius: 14px;
-        max-width: 95vw;
+        bottom: 4px;
+        padding: 4px 10px;
+        gap: 6px;
+        font-size: 10px;
+        border-radius: 12px;
+        max-width: 98vw;
+        flex-wrap: nowrap;
+        align-items: center;
       }
       .stats-bar .refresh-info {
+        font-size: 9px;
+        width: auto;
+        margin-top: 0;
+      }
+      .stats-bar .refresh-btn {
+        padding: 2px 8px;
         font-size: 10px;
       }
       .attribution {
