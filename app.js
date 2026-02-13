@@ -36,6 +36,7 @@ const FLIGHT_CATEGORIES = {
 };
 
 const NO_DATA_COLOR = '#95a5a6';
+const GUST_WARNING_KT = 20; // Show warning when gusts >= this value
 
 // Major Austrian airports (ICAO codes)
 const MAJOR_AIRPORTS = new Set([
@@ -224,9 +225,59 @@ function getTrendForAirport(icao) {
   return null;
 }
 
+// ─── Wind Gust Warning ────────────────────────────────────
+
+function hasCurrentGustWarning(icao) {
+  const metar = metarData[icao];
+  if (!metar) return false;
+  return metar.wgst >= GUST_WARNING_KT;
+}
+
+function hasForecastGustWarning(icao) {
+  const taf = tafData[icao];
+  if (!taf || !taf.fcsts) return false;
+  const now = Math.floor(Date.now() / 1000);
+  for (const period of taf.fcsts) {
+    if (period.timeTo <= now) continue;
+    if (period.wgst >= GUST_WARNING_KT) return true;
+  }
+  return false;
+}
+
+function hasGustWarning(icao) {
+  return hasCurrentGustWarning(icao) || hasForecastGustWarning(icao);
+}
+
+function getMaxGust(icao) {
+  let max = 0;
+  const metar = metarData[icao];
+  if (metar && metar.wgst) max = metar.wgst;
+  const taf = tafData[icao];
+  if (taf && taf.fcsts) {
+    const now = Math.floor(Date.now() / 1000);
+    for (const period of taf.fcsts) {
+      if (period.timeTo <= now) continue;
+      if (period.wgst > max) max = period.wgst;
+    }
+  }
+  return max;
+}
+
+function getForecastGustAt(icao, targetTime) {
+  const taf = tafData[icao];
+  if (!taf || !taf.fcsts) return 0;
+  let maxGust = 0;
+  for (const period of taf.fcsts) {
+    if (period.timeFrom <= targetTime && targetTime < period.timeTo) {
+      if (period.wgst > maxGust) maxGust = period.wgst;
+    }
+  }
+  return maxGust;
+}
+
 // ─── Marker Icons ──────────────────────────────────────────
 
-function createAirportIcon(icao, isMajor, trend) {
+function createAirportIcon(icao, isMajor, trend, gustWarn) {
   const color = getMarkerColor(icao);
   const size = isMajor ? 20 : 12;
   const border = isMajor ? 3 : 2;
@@ -241,8 +292,15 @@ function createAirportIcon(icao, isMajor, trend) {
     arrowHtml = `<div class="trend-arrow trend-deteriorating" style="font-size:${arrowSize}px;">&#9660;</div>`;
   }
 
+  let gustHtml = '';
+  if (gustWarn) {
+    const gustSize = isMajor ? 13 : 9;
+    gustHtml = `<div class="gust-indicator" style="font-size:${gustSize}px;" title="Gusts ≥ ${GUST_WARNING_KT}kt">&#9888;</div>`;
+  }
+
   const dotWidth = size + border * 2;
   const arrowExtra = trend ? (isMajor ? 18 : 13) : 0;
+  const gustExtra = gustWarn ? (isMajor ? 16 : 12) : 0;
 
   return L.divIcon({
     className: 'airport-marker',
@@ -251,8 +309,8 @@ function createAirportIcon(icao, isMajor, trend) {
       border: ${border}px solid white; border-radius: 50%;
       box-shadow: ${shadow};
       ${isMajor ? 'outline: 2px solid ' + color + '40;' : ''}
-    "></div>${arrowHtml}</div>`,
-    iconSize: [dotWidth + arrowExtra, dotWidth],
+    "></div>${arrowHtml}${gustHtml}</div>`,
+    iconSize: [dotWidth + arrowExtra + gustExtra, dotWidth],
     iconAnchor: [dotWidth / 2, dotWidth / 2],
   });
 }
@@ -392,7 +450,10 @@ function buildTafTimeline(taf) {
 
     if (period.wdir != null && period.wspd != null) {
       let w = `Wind: ${String(period.wdir).padStart(3,'0')}°/${period.wspd}kt`;
-      if (period.wgst) w += ` G${period.wgst}`;
+      if (period.wgst) {
+        const gwClass = period.wgst >= GUST_WARNING_KT ? 'gust-warn' : '';
+        w += ` <span class="${gwClass}">G${period.wgst}</span>`;
+      }
       details.push(w);
     }
 
@@ -448,10 +509,16 @@ function buildForecastOutlook(icao) {
     const color = cat && FLIGHT_CATEGORIES[cat] ? FLIGHT_CATEGORIES[cat].color : NO_DATA_COLOR;
     const catLabel = cat || 'N/A';
 
+    const gustAt = inRange ? getForecastGustAt(icao, targetTime) : 0;
+    const gustWarnAt = gustAt >= GUST_WARNING_KT;
+
     html += `<div class="forecast-outlook-item${inRange ? '' : ' forecast-outlook-na'}">`;
     html += `<div class="forecast-outlook-dot" style="background:${color}"></div>`;
     html += `<div class="forecast-outlook-label">${h.label}</div>`;
     html += `<div class="forecast-outlook-cat">${catLabel}</div>`;
+    if (gustWarnAt) {
+      html += `<div class="forecast-outlook-gust">G${gustAt}kt</div>`;
+    }
     html += `</div>`;
   }
 
@@ -488,6 +555,10 @@ function buildPopupContent(airport) {
   html += `<div class="badge-row">`;
   html += `<span class="badge ${catClass}">${catLabel}</span>`;
   html += `<span class="badge type-badge">${trafficLabel}</span>`;
+  if (hasGustWarning(icao)) {
+    const maxG = getMaxGust(icao);
+    html += `<span class="badge gust-badge">&#9888; G${maxG}kt</span>`;
+  }
   html += `</div>`;
 
   // Forecast outlook row
@@ -525,7 +596,10 @@ function buildPopupContent(airport) {
 
     if (metar.wdir != null && metar.wspd != null) {
       let windStr = `${String(metar.wdir).padStart(3, '0')}° / ${metar.wspd} kt`;
-      if (metar.wgst) windStr += ` (G${metar.wgst})`;
+      if (metar.wgst) {
+        const gustClass = metar.wgst >= GUST_WARNING_KT ? ' gust-warn' : '';
+        windStr += ` <span class="gust-value${gustClass}">(G${metar.wgst})</span>`;
+      }
       html += `<div class="detail-row"><span class="detail-label">Wind</span><span class="detail-value">${windStr}</span></div>`;
     }
 
@@ -626,7 +700,8 @@ function displayAirports() {
     const icao = airport.icaoCode;
     const isMajor = MAJOR_AIRPORTS.has(icao);
     const trend = getTrendForAirport(icao);
-    const icon = createAirportIcon(icao, isMajor, trend);
+    const gustWarn = hasGustWarning(icao);
+    const icon = createAirportIcon(icao, isMajor, trend, gustWarn);
 
     const marker = L.marker([coords[1], coords[0]], {
       icon, zIndexOffset: isMajor ? 1000 : 0,
@@ -1033,6 +1108,38 @@ style.textContent = `
   }
   .trend-improving { color: #27ae60; }
   .trend-deteriorating { color: #c0392b; }
+
+  /* Gust Warning */
+  .gust-indicator {
+    line-height: 1;
+    color: #e67e22;
+    text-shadow: 0 0 2px rgba(255,255,255,0.9);
+    pointer-events: none;
+    animation: gust-pulse 2s ease-in-out infinite;
+  }
+  @keyframes gust-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+  .gust-badge {
+    background: #e67e22 !important;
+    color: white !important;
+    font-weight: 700;
+  }
+  .gust-value.gust-warn {
+    color: #e67e22;
+    font-weight: 700;
+  }
+  .gust-warn {
+    color: #e67e22;
+    font-weight: 700;
+  }
+  .forecast-outlook-gust {
+    font-size: 8px;
+    font-weight: 700;
+    color: #e67e22;
+    margin-top: -1px;
+  }
 
   /* TAF Timeline */
   .taf-section {
