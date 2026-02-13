@@ -294,13 +294,12 @@ function createAirportIcon(icao, isMajor, trend, gustWarn) {
 
   let gustHtml = '';
   if (gustWarn) {
-    const gustSize = isMajor ? 16 : 13;
-    gustHtml = `<div class="gust-indicator" style="font-size:${gustSize}px;" title="Gusts ≥ ${GUST_WARNING_KT}kt">&#9888;</div>`;
+    gustHtml = `<div class="gust-indicator${isMajor ? ' gust-major' : ''}" title="Gusts ≥ ${GUST_WARNING_KT}kt">&#9888;</div>`;
   }
 
   const dotWidth = size + border * 2;
   const arrowExtra = trend ? (isMajor ? 18 : 13) : 0;
-  const gustExtra = gustWarn ? (isMajor ? 18 : 15) : 0;
+  const gustSize = gustWarn ? (isMajor ? 20 : 16) : 0;
 
   return L.divIcon({
     className: 'airport-marker',
@@ -310,8 +309,8 @@ function createAirportIcon(icao, isMajor, trend, gustWarn) {
       box-shadow: ${shadow};
       ${isMajor ? 'outline: 2px solid ' + color + '40;' : ''}
     "></div>${arrowHtml}${gustHtml}</div>`,
-    iconSize: [dotWidth + arrowExtra + gustExtra, dotWidth],
-    iconAnchor: [dotWidth / 2, dotWidth / 2],
+    iconSize: [dotWidth + arrowExtra + gustSize, dotWidth + gustSize],
+    iconAnchor: [dotWidth / 2, (dotWidth + gustSize) / 2],
   });
 }
 
@@ -1096,6 +1095,7 @@ style.textContent = `
     border: none !important;
   }
   .marker-wrapper {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 1px;
@@ -1111,19 +1111,34 @@ style.textContent = `
 
   /* Gust Warning */
   .gust-indicator {
-    line-height: 1;
-    color: #e67e22;
-    text-shadow:
-      0 0 3px rgba(255,255,255,1),
-      0 0 6px rgba(255,255,255,0.8),
-      0 1px 2px rgba(0,0,0,0.3);
-    filter: drop-shadow(0 0 2px rgba(230,126,34,0.6));
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 16px;
+    height: 16px;
+    background: #e67e22;
+    color: white;
+    border: 2px solid white;
+    border-radius: 50%;
+    font-size: 10px;
+    line-height: 16px;
+    text-align: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
     pointer-events: none;
     animation: gust-pulse 1.5s ease-in-out infinite;
+    z-index: 10;
+  }
+  .gust-indicator.gust-major {
+    top: -10px;
+    right: -10px;
+    width: 19px;
+    height: 19px;
+    font-size: 12px;
+    line-height: 19px;
   }
   @keyframes gust-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.7; transform: scale(1.15); }
+    50% { opacity: 0.85; transform: scale(1.15); }
   }
   .gust-badge {
     background: #e67e22 !important;
