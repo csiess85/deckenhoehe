@@ -13,6 +13,9 @@
     #map { width: 100%; height: 100vh; }
 
     .leaflet-top { top: 54px !important; }
+    @media (max-width: 768px) {
+      .leaflet-top { top: 110px !important; }
+    }
 
     .header {
       position: absolute;
@@ -350,25 +353,28 @@
       text-align: center;
     }
 
+    .header-refresh {
+      display: none;
+    }
+
     @media (max-width: 768px) {
       .stats-bar {
-        bottom: 4px;
-        padding: 4px 12px;
-        gap: 8px;
-        font-size: 10px;
-        border-radius: 12px;
-        flex-wrap: nowrap;
+        display: none !important;
+      }
+      .header-refresh {
+        display: flex !important;
         align-items: center;
-      }
-      .stat-counts {
-        display: none;
-      }
-      .stats-bar .refresh-info {
+        gap: 6px;
+        order: 4;
         font-size: 10px;
       }
-      .stats-bar .refresh-btn {
-        padding: 3px 10px;
+      .header-refresh .refresh-info {
+        color: #999;
         font-size: 10px;
+      }
+      .header-refresh .refresh-btn {
+        padding: 2px 8px;
+        font-size: 11px;
       }
       .attribution {
         display: none;
@@ -412,6 +418,10 @@
     </div>
     <a href="/help.html" class="help-btn" title="Help">?</a>
     <a href="/stats.html" class="help-btn" title="API Stats">&#9881;</a>
+    <div class="header-refresh" id="headerRefresh" style="display:none;">
+      <span class="refresh-info" id="headerRefreshInfo"></span>
+      <button id="headerRefreshBtn" class="refresh-btn" title="Refresh weather data now">&#8635;</button>
+    </div>
   </div>
 
   <div id="map"></div>

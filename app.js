@@ -760,12 +760,13 @@ function formatAge(ms) {
 
 function updateRefreshInfo() {
   const el = document.getElementById('refreshInfo');
-  if (!el) return;
+  const headerEl = document.getElementById('headerRefreshInfo');
   const horizonLabels = { 'current': 'Current conditions', '2h': '+2h forecast', '4h': '+4h forecast', '8h': '+8h forecast', '24h': '+24h forecast' };
   const horizonText = horizonLabels[selectedHorizon] || 'Current conditions';
 
   if (!lastApiFetch) {
-    el.innerHTML = horizonText;
+    if (el) el.innerHTML = horizonText;
+    if (headerEl) headerEl.innerHTML = horizonText;
     return;
   }
 
@@ -774,7 +775,14 @@ function updateRefreshInfo() {
   const ageText = formatAge(apiAge);
   const stale = apiAge > 10 * 60 * 1000; // > 10 min = stale styling
 
-  el.innerHTML = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${timestampText} (${ageText})</span>`;
+  const fullText = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${timestampText} (${ageText})</span>`;
+  if (el) el.innerHTML = fullText;
+
+  // Short version for mobile header
+  if (headerEl) {
+    headerEl.innerHTML = `<span class="wx-timestamp${stale ? ' wx-stale' : ''}">${timestampText} (${ageText})</span>`;
+    document.getElementById('headerRefresh').style.display = '';
+  }
 }
 
 // ─── Fetch METAR Data ──────────────────────────────────────
@@ -1062,14 +1070,19 @@ async function init() {
   });
 
   // Refresh weather button — forces a fresh fetch from AWC API (bypasses server cache)
-  document.getElementById('refreshBtn').addEventListener('click', async () => {
+  async function handleRefresh() {
     const btn = document.getElementById('refreshBtn');
+    const hdrBtn = document.getElementById('headerRefreshBtn');
     btn.disabled = true;
-    btn.textContent = 'Fetching from API...';
+    btn.textContent = 'Fetching...';
+    if (hdrBtn) { hdrBtn.disabled = true; hdrBtn.textContent = '...'; }
     await refreshWeather(true);
     btn.disabled = false;
     btn.textContent = '\u21BB Refresh WX';
-  });
+    if (hdrBtn) { hdrBtn.disabled = false; hdrBtn.textContent = '\u21BB'; }
+  }
+  document.getElementById('refreshBtn').addEventListener('click', handleRefresh);
+  document.getElementById('headerRefreshBtn').addEventListener('click', handleRefresh);
 }
 
 // ─── Injected CSS ──────────────────────────────────────────
