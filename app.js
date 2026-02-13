@@ -294,13 +294,13 @@ function createAirportIcon(icao, isMajor, trend, gustWarn) {
 
   let gustHtml = '';
   if (gustWarn) {
-    const gustSize = isMajor ? 13 : 9;
+    const gustSize = isMajor ? 16 : 13;
     gustHtml = `<div class="gust-indicator" style="font-size:${gustSize}px;" title="Gusts ≥ ${GUST_WARNING_KT}kt">&#9888;</div>`;
   }
 
   const dotWidth = size + border * 2;
   const arrowExtra = trend ? (isMajor ? 18 : 13) : 0;
-  const gustExtra = gustWarn ? (isMajor ? 16 : 12) : 0;
+  const gustExtra = gustWarn ? (isMajor ? 18 : 15) : 0;
 
   return L.divIcon({
     className: 'airport-marker',
@@ -1113,13 +1113,17 @@ style.textContent = `
   .gust-indicator {
     line-height: 1;
     color: #e67e22;
-    text-shadow: 0 0 2px rgba(255,255,255,0.9);
+    text-shadow:
+      0 0 3px rgba(255,255,255,1),
+      0 0 6px rgba(255,255,255,0.8),
+      0 1px 2px rgba(0,0,0,0.3);
+    filter: drop-shadow(0 0 2px rgba(230,126,34,0.6));
     pointer-events: none;
-    animation: gust-pulse 2s ease-in-out infinite;
+    animation: gust-pulse 1.5s ease-in-out infinite;
   }
   @keyframes gust-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.15); }
   }
   .gust-badge {
     background: #e67e22 !important;
