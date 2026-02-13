@@ -40,7 +40,7 @@ const GUST_WARNING_KT = 20; // Show warning when gusts >= this value
 
 // Major Austrian airports (ICAO codes)
 const MAJOR_AIRPORTS = new Set([
-  'LOWW', 'LOWS', 'LOWG', 'LOWI', 'LOWK', 'LOWL',
+  'LOWW', 'LOWS', 'LOWG', 'LOWI', 'LOWK', 'LOWL', 'LOAV',
 ]);
 
 let map;
