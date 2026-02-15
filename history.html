@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather History — Austria Airport VFR Status Map</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f6fa;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .history-header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .history-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    .history-header h1 span { color: #e63946; }
+    .back-btn {
+      padding: 6px 16px;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .back-btn:hover { background: #2a2a4e; }
+
+    .content {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    /* Stats cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      margin-bottom: 2px;
+    }
+    .card-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    .card-sub {
+      font-size: 11px;
+      color: #999;
+      margin-top: 1px;
+    }
+
+    /* Controls */
+    .controls {
+      background: white;
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .control-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+    .control-group select,
+    .control-group input {
+      padding: 6px 10px;
+      border: 1.5px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .control-group select:focus,
+    .control-group input:focus {
+      border-color: #3498db;
+    }
+    .range-btns {
+      display: flex;
+      gap: 4px;
+    }
+    .range-btn {
+      padding: 6px 14px;
+      border: 1.5px solid #ddd;
+      border-radius: 6px;
+      background: white;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #666;
+    }
+    .range-btn:hover { background: #f0f0f0; }
+    .range-btn.active {
+      background: #1a1a2e;
+      color: white;
+      border-color: #1a1a2e;
+    }
+
+    /* Legend */
+    .legend {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      margin-left: auto;
+      font-size: 12px;
+      color: #444;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    /* Timeline */
+    .timeline-section {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      padding: 16px;
+      margin-bottom: 20px;
+      overflow-x: auto;
+    }
+    .timeline-section h2 {
+      font-size: 14px;
+      color: #1a1a2e;
+      margin-bottom: 12px;
+    }
+    .timeline-container {
+      min-width: 600px;
+    }
+    .airport-group {
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .airport-group:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+    .airport-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 4px;
+    }
+    .timeline-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 3px;
+    }
+    .timeline-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #999;
+      width: 42px;
+      flex-shrink: 0;
+      text-align: right;
+    }
+    .timeline-bar {
+      flex: 1;
+      height: 18px;
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      position: relative;
+      background: #f0f0f0;
+      cursor: pointer;
+    }
+    .timeline-segment {
+      height: 100%;
+      min-width: 2px;
+      transition: opacity 0.15s;
+      position: relative;
+    }
+    .timeline-segment:hover {
+      opacity: 0.8;
+    }
+    .timeline-segment.selected {
+      outline: 2px solid #1a1a2e;
+      outline-offset: -2px;
+      z-index: 2;
+    }
+    .time-axis {
+      display: flex;
+      margin-left: 48px;
+      margin-top: 4px;
+      position: relative;
+      height: 16px;
+    }
+    .time-tick {
+      position: absolute;
+      font-size: 9px;
+      color: #999;
+      font-family: 'SF Mono', monospace;
+      transform: translateX(-50%);
+    }
+    .now-marker {
+      position: absolute;
+      top: -3px;
+      transform: translateX(-50%);
+      font-size: 8px;
+      color: #e74c3c;
+      font-weight: 700;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+    .empty-state h3 {
+      font-size: 16px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+    .empty-state p {
+      font-size: 13px;
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    /* Detail panel */
+    .detail-panel {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      padding: 16px;
+      margin-bottom: 20px;
+      display: none;
+    }
+    .detail-panel.visible { display: block; }
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .detail-header h3 {
+      font-size: 15px;
+      color: #1a1a2e;
+    }
+    .detail-close {
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      color: #999;
+      padding: 4px 8px;
+    }
+    .detail-close:hover { color: #333; }
+    .detail-columns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 768px) {
+      .detail-columns {
+        grid-template-columns: 1fr;
+      }
+    }
+    .detail-section {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .detail-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: 6px;
+    }
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 2px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .detail-row:last-child { border-bottom: none; }
+    .detail-label { color: #888; }
+    .detail-value { color: #333; font-weight: 500; }
+    .detail-raw {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 10px;
+      color: #555;
+      word-break: break-all;
+      line-height: 1.4;
+      margin-top: 6px;
+      background: #eee;
+      padding: 6px 8px;
+      border-radius: 4px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+    }
+
+    @media (max-width: 768px) {
+      .history-header h1 { font-size: 15px; }
+      .controls { gap: 8px; }
+      .legend { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="history-header">
+    <h1><span>Weather History</span> — Austria VFR Map</h1>
+    <a href="/" class="back-btn">Back to Map</a>
+  </div>
+
+  <div class="content">
+    <div class="cards" id="statsCards">
+      <div class="card"><div class="card-label">Loading...</div><div class="card-value">-</div></div>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <div class="control-label">Airport</div>
+        <select id="airportSelect">
+          <option value="all">All Airports</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <div class="control-label">Time Range</div>
+        <div class="range-btns">
+          <button class="range-btn active" data-hours="24">24h</button>
+          <button class="range-btn" data-hours="48">48h</button>
+          <button class="range-btn" data-hours="168">7d</button>
+          <button class="range-btn" data-hours="720">30d</button>
+        </div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">Custom From</div>
+        <input type="datetime-local" id="customFrom" />
+      </div>
+      <div class="control-group">
+        <div class="control-label">Custom To</div>
+        <input type="datetime-local" id="customTo" />
+      </div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> VFR</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#3498db"></div> MVFR</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> IFR</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#9b59b6"></div> LIFR</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#95a5a6"></div> N/A</div>
+      </div>
+    </div>
+
+    <div class="detail-panel" id="detailPanel">
+      <div class="detail-header">
+        <h3 id="detailTitle">-</h3>
+        <button class="detail-close" id="detailClose">&times;</button>
+      </div>
+      <div class="detail-columns" id="detailContent"></div>
+    </div>
+
+    <div class="timeline-section">
+      <h2>Flight Category Timeline</h2>
+      <div id="timelineContainer" class="timeline-container">
+        <div class="empty-state">
+          <h3>Loading history data...</h3>
+          <p>The server collects weather snapshots every 2 hours. Data will appear here once the first snapshots are available.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CAT_COLORS = {
+      VFR: '#2ecc71', MVFR: '#3498db', IFR: '#e74c3c', LIFR: '#9b59b6',
+    };
+    const NO_DATA_COLOR = '#95a5a6';
+
+    let currentRange = 24;
+    let currentAirport = 'all';
+    let timelineData = null;
+    let selectedSegment = null;
+
+    // ─── Utilities ─────────────────────────────────────────
+
+    function fmtDuration(sec) {
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm';
+      const hr = Math.floor(min / 60);
+      return hr + 'h ' + (min % 60) + 'm';
+    }
+
+    function fmtBytes(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+      return (b / 1048576).toFixed(1) + ' MB';
+    }
+
+    function fmtUtcShort(isoStr) {
+      const d = new Date(isoStr);
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mn = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${dd}.${mm} ${hh}:${mn}Z`;
+    }
+
+    function fmtUtcHour(d) {
+      return String(d.getUTCHours()).padStart(2, '0') + 'Z';
+    }
+
+    function fmtDate(d) {
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      return `${dd}/${mm} ${fmtUtcHour(d)}`;
+    }
+
+    function catColor(cat) {
+      return (cat && CAT_COLORS[cat]) ? CAT_COLORS[cat] : NO_DATA_COLOR;
+    }
+
+    function catBadge(cat) {
+      const color = catColor(cat);
+      return `<span class="badge" style="background:${color}">${cat || 'N/A'}</span>`;
+    }
+
+    // ─── Data Fetching ─────────────────────────────────────
+
+    async function loadStats() {
+      try {
+        const data = await (await fetch('/api/history/stats')).json();
+        document.getElementById('statsCards').innerHTML = `
+          <div class="card">
+            <div class="card-label">METAR Snapshots</div>
+            <div class="card-value">${data.total_metar.toLocaleString()}</div>
+            <div class="card-sub">${data.airport_count} airports tracked</div>
+          </div>
+          <div class="card">
+            <div class="card-label">TAF Snapshots</div>
+            <div class="card-value">${data.total_taf.toLocaleString()}</div>
+          </div>
+          <div class="card">
+            <div class="card-label">History Range</div>
+            <div class="card-value">${data.oldest ? fmtUtcShort(data.oldest) : '-'}</div>
+            <div class="card-sub">to ${data.newest ? fmtUtcShort(data.newest) : '-'}</div>
+          </div>
+          <div class="card">
+            <div class="card-label">DB Size</div>
+            <div class="card-value">${fmtBytes(data.db_size_bytes)}</div>
+            <div class="card-sub">Next fetch: ${data.next_fetch_in_seconds != null ? fmtDuration(data.next_fetch_in_seconds) : '-'}</div>
+          </div>
+        `;
+      } catch (e) {
+        console.warn('Failed to load history stats:', e);
+      }
+    }
+
+    async function loadAirports() {
+      try {
+        const data = await (await fetch('/api/history/airports')).json();
+        const select = document.getElementById('airportSelect');
+        // Keep the "All" option
+        for (const a of data.airports) {
+          if (a.metar_count > 0 || a.taf_count > 0) {
+            const opt = document.createElement('option');
+            opt.value = a.icao_id;
+            opt.textContent = `${a.icao_id} - ${a.name} (${a.metar_count}/${a.taf_count})`;
+            select.appendChild(opt);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load airport list:', e);
+      }
+    }
+
+    async function loadTimeline() {
+      const container = document.getElementById('timelineContainer');
+
+      // Compute time range
+      let from, to;
+      const customFrom = document.getElementById('customFrom').value;
+      const customTo = document.getElementById('customTo').value;
+      if (customFrom && customTo) {
+        from = new Date(customFrom).toISOString();
+        to = new Date(customTo).toISOString();
+      } else {
+        to = new Date().toISOString();
+        from = new Date(Date.now() - currentRange * 3600 * 1000).toISOString();
+      }
+
+      const icao = currentAirport;
+
+      try {
+        const res = await fetch(`/api/history/timeline?icao=${encodeURIComponent(icao)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        timelineData = await res.json();
+        renderTimeline(timelineData, new Date(from), new Date(to));
+      } catch (e) {
+        container.innerHTML = '<div class="empty-state"><h3>Failed to load</h3><p>' + e.message + '</p></div>';
+      }
+    }
+
+    // ─── Timeline Rendering ────────────────────────────────
+
+    function renderTimeline(data, fromDate, toDate) {
+      const container = document.getElementById('timelineContainer');
+      const totalMs = toDate.getTime() - fromDate.getTime();
+      if (totalMs <= 0) {
+        container.innerHTML = '<div class="empty-state"><h3>Invalid time range</h3></div>';
+        return;
+      }
+
+      // Collect all airports that have data
+      const allIcaos = new Set([...Object.keys(data.metar || {}), ...Object.keys(data.taf || {})]);
+      if (allIcaos.size === 0) {
+        container.innerHTML = '<div class="empty-state"><h3>No data in this time range</h3><p>Try selecting a wider time range or wait for the server to collect more snapshots.</p></div>';
+        return;
+      }
+
+      const sortedIcaos = [...allIcaos].sort();
+      let html = '';
+
+      for (const icao of sortedIcaos) {
+        html += `<div class="airport-group">`;
+        html += `<div class="airport-name">${icao}</div>`;
+
+        // METAR row
+        const metarPoints = data.metar[icao] || [];
+        html += renderTimelineRow('METAR', metarPoints, fromDate, totalMs, icao, 'metar');
+
+        // TAF row
+        const tafPoints = data.taf[icao] || [];
+        html += renderTimelineRow('TAF', tafPoints.map(p => ({ t: p.t, cat: p.cat_now })), fromDate, totalMs, icao, 'taf');
+
+        html += `</div>`;
+      }
+
+      // Time axis
+      html += renderTimeAxis(fromDate, toDate, totalMs);
+
+      container.innerHTML = html;
+
+      // Add click handlers to segments
+      container.querySelectorAll('.timeline-segment').forEach(seg => {
+        seg.addEventListener('click', () => {
+          container.querySelectorAll('.timeline-segment.selected').forEach(s => s.classList.remove('selected'));
+          seg.classList.add('selected');
+          loadDetail(seg.dataset.icao, seg.dataset.time);
+        });
+      });
+    }
+
+    function renderTimelineRow(label, points, fromDate, totalMs, icao, type) {
+      if (points.length === 0) {
+        return `<div class="timeline-row">
+          <div class="timeline-label">${label}</div>
+          <div class="timeline-bar" style="background:#f0f0f0"></div>
+        </div>`;
+      }
+
+      let segHtml = '';
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        const pTime = new Date(p.t).getTime();
+        const nextTime = i < points.length - 1 ? new Date(points[i + 1].t).getTime() : fromDate.getTime() + totalMs;
+        const left = ((pTime - fromDate.getTime()) / totalMs) * 100;
+        const width = ((nextTime - pTime) / totalMs) * 100;
+        const color = catColor(p.cat);
+        const title = `${p.cat || 'N/A'} at ${fmtUtcShort(p.t)}`;
+        segHtml += `<div class="timeline-segment" style="left:${left}%;width:${width}%;background:${color};position:absolute;"
+          data-icao="${icao}" data-time="${p.t}" data-type="${type}" title="${title}"></div>`;
+      }
+
+      return `<div class="timeline-row">
+        <div class="timeline-label">${label}</div>
+        <div class="timeline-bar">${segHtml}</div>
+      </div>`;
+    }
+
+    function renderTimeAxis(fromDate, toDate, totalMs) {
+      const totalHours = totalMs / 3600000;
+      let stepHours;
+      if (totalHours <= 24) stepHours = 3;
+      else if (totalHours <= 72) stepHours = 6;
+      else if (totalHours <= 168) stepHours = 12;
+      else stepHours = 24;
+
+      let html = '<div class="time-axis">';
+
+      // Start from the first clean step
+      const startHour = Math.ceil(fromDate.getUTCHours() / stepHours) * stepHours;
+      const firstTick = new Date(fromDate);
+      firstTick.setUTCHours(startHour, 0, 0, 0);
+      if (firstTick < fromDate) firstTick.setUTCHours(firstTick.getUTCHours() + stepHours);
+
+      for (let t = firstTick.getTime(); t <= toDate.getTime(); t += stepHours * 3600000) {
+        const left = ((t - fromDate.getTime()) / totalMs) * 100;
+        const d = new Date(t);
+        const label = totalHours > 48 ? fmtDate(d) : fmtUtcHour(d);
+        html += `<span class="time-tick" style="left:${left}%">${label}</span>`;
+      }
+
+      // Now marker
+      const now = Date.now();
+      if (now >= fromDate.getTime() && now <= toDate.getTime()) {
+        const left = ((now - fromDate.getTime()) / totalMs) * 100;
+        html += `<span class="now-marker" style="left:${left}%">NOW</span>`;
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    // ─── Detail Panel ──────────────────────────────────────
+
+    async function loadDetail(icao, time) {
+      const panel = document.getElementById('detailPanel');
+      const title = document.getElementById('detailTitle');
+      const content = document.getElementById('detailContent');
+
+      title.textContent = `${icao} at ${fmtUtcShort(time)}`;
+      panel.classList.add('visible');
+
+      try {
+        const data = await (await fetch(`/api/history/detail?icao=${encodeURIComponent(icao)}&time=${encodeURIComponent(time)}`)).json();
+        let html = '';
+
+        // METAR column
+        html += '<div class="detail-section">';
+        html += '<div class="detail-section-title">METAR (Observation)</div>';
+        if (data.metar) {
+          const m = data.metar;
+          html += detailRow('Flight Category', catBadge(m.flt_cat));
+          html += detailRow('Observed', m.report_time ? fmtUtcShort(m.report_time) : '-');
+          if (m.visib != null) {
+            const vis = parseFloat(m.visib);
+            html += detailRow('Visibility', `${m.visib} SM (${(vis * 1.60934).toFixed(1)} km)`);
+          }
+          if (m.ceiling != null) html += detailRow('Ceiling', m.ceiling + ' ft AGL');
+          if (m.wdir != null && m.wspd != null) {
+            let wind = `${String(m.wdir).padStart(3, '0')}° / ${m.wspd} kt`;
+            if (m.wgst) wind += ` G${m.wgst}`;
+            html += detailRow('Wind', wind);
+          }
+          if (m.temp != null) html += detailRow('Temp / Dew', `${m.temp}°C / ${m.dewp ?? '-'}°C`);
+          if (m.altim != null) html += detailRow('QNH', Math.round(m.altim) + ' hPa');
+          if (m.wx_string) html += detailRow('Weather', m.wx_string);
+          if (m.raw_ob) html += `<div class="detail-raw">${m.raw_ob}</div>`;
+        } else {
+          html += '<div style="color:#999;font-size:12px;">No METAR data at this time</div>';
+        }
+        html += '</div>';
+
+        // TAF column
+        html += '<div class="detail-section">';
+        html += '<div class="detail-section-title">TAF (Forecast)</div>';
+        if (data.taf) {
+          const t = data.taf;
+          html += detailRow('Valid', `${t.valid_from ? fmtUtcShort(t.valid_from) : '-'} to ${t.valid_to ? fmtUtcShort(t.valid_to) : '-'}`);
+          html += detailRow('Cat Now', catBadge(t.flt_cat_now));
+          html += detailRow('Cat +2h', catBadge(t.flt_cat_2h));
+          html += detailRow('Cat +4h', catBadge(t.flt_cat_4h));
+          html += detailRow('Cat +8h', catBadge(t.flt_cat_8h));
+          html += detailRow('Cat +24h', catBadge(t.flt_cat_24h));
+          if (t.raw_taf) html += `<div class="detail-raw">${t.raw_taf}</div>`;
+        } else {
+          html += '<div style="color:#999;font-size:12px;">No TAF data at this time</div>';
+        }
+        html += '</div>';
+
+        content.innerHTML = html;
+      } catch (e) {
+        content.innerHTML = '<div style="color:#e74c3c;padding:12px;">Failed to load detail: ' + e.message + '</div>';
+      }
+    }
+
+    function detailRow(label, value) {
+      return `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value">${value}</span></div>`;
+    }
+
+    // ─── Event Handlers ────────────────────────────────────
+
+    document.querySelectorAll('.range-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentRange = parseInt(btn.dataset.hours);
+        // Clear custom inputs
+        document.getElementById('customFrom').value = '';
+        document.getElementById('customTo').value = '';
+        loadTimeline();
+      });
+    });
+
+    document.getElementById('airportSelect').addEventListener('change', (e) => {
+      currentAirport = e.target.value;
+      loadTimeline();
+    });
+
+    document.getElementById('customFrom').addEventListener('change', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      loadTimeline();
+    });
+    document.getElementById('customTo').addEventListener('change', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      loadTimeline();
+    });
+
+    document.getElementById('detailClose').addEventListener('click', () => {
+      document.getElementById('detailPanel').classList.remove('visible');
+      document.querySelectorAll('.timeline-segment.selected').forEach(s => s.classList.remove('selected'));
+    });
+
+    // ─── Init ──────────────────────────────────────────────
+
+    async function init() {
+      await Promise.all([loadStats(), loadAirports()]);
+      await loadTimeline();
+    }
+
+    init();
+  </script>
+
+</body>
+</html>

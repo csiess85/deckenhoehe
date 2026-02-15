@@ -1,16 +1,22 @@
 // Local server that serves static files and proxies METAR + TAF + airport requests
 // to aviationweather.gov (CORS bypass) and api.core.openaip.net (key on server)
+// Also stores weather history in SQLite for long-term comparison
 
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
 
 const PORT = process.env.PORT || 5556;
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
 const WEATHER_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const AIRPORT_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const CACHE_FILE = path.join(__dirname, '.cache.json');
+const HISTORY_DB_PATH = path.join(__dirname, 'data', 'weather_history.db');
+const HISTORY_FETCH_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
+const HISTORY_RETENTION_DAYS = 3 * 365; // ~1095 days
+const AIRPORT_LIST_REFRESH_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // Persistent config stored in data/config.json
 const CONFIG_PATH = path.join(__dirname, 'data', 'config.json');
@@ -62,6 +68,373 @@ function saveCacheToDisk() {
 
 // Auto-save cache every 5 minutes
 setInterval(saveCacheToDisk, 5 * 60 * 1000);
+
+// ─── SQLite Weather History Database ────────────────────────
+
+fs.mkdirSync(path.dirname(HISTORY_DB_PATH), { recursive: true });
+const db = new DatabaseSync(HISTORY_DB_PATH);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS metar_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fetch_time   TEXT NOT NULL,
+    icao_id      TEXT NOT NULL,
+    flt_cat      TEXT,
+    temp         REAL,
+    dewp         REAL,
+    wdir         INTEGER,
+    wspd         INTEGER,
+    wgst         INTEGER,
+    visib        TEXT,
+    altim        REAL,
+    ceiling      INTEGER,
+    wx_string    TEXT,
+    raw_ob       TEXT,
+    report_time  TEXT,
+    metar_json   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_metar_icao_time ON metar_history (icao_id, fetch_time);
+  CREATE INDEX IF NOT EXISTS idx_metar_time ON metar_history (fetch_time);
+
+  CREATE TABLE IF NOT EXISTS taf_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fetch_time      TEXT NOT NULL,
+    icao_id         TEXT NOT NULL,
+    valid_from      TEXT,
+    valid_to        TEXT,
+    flt_cat_now     TEXT,
+    flt_cat_2h      TEXT,
+    flt_cat_4h      TEXT,
+    flt_cat_8h      TEXT,
+    flt_cat_24h     TEXT,
+    raw_taf         TEXT,
+    taf_json        TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_taf_icao_time ON taf_history (icao_id, fetch_time);
+  CREATE INDEX IF NOT EXISTS idx_taf_time ON taf_history (fetch_time);
+
+  CREATE TABLE IF NOT EXISTS tracked_airports (
+    icao_id    TEXT PRIMARY KEY,
+    name       TEXT,
+    lat        REAL,
+    lon        REAL,
+    updated_at TEXT NOT NULL
+  );
+`);
+
+const insertMetarStmt = db.prepare(`
+  INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, wx_string, raw_ob, report_time, metar_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const insertTafStmt = db.prepare(`
+  INSERT INTO taf_history (fetch_time, icao_id, valid_from, valid_to, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h, raw_taf, taf_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+console.log(`Weather history DB: ${HISTORY_DB_PATH}`);
+
+// ─── Flight Category Computation (ported from app.js) ───────
+
+function getCeilingFromClouds(clouds) {
+  if (!clouds || !Array.isArray(clouds)) return null;
+  for (const c of clouds) {
+    if (c.cover === 'BKN' || c.cover === 'OVC' || c.cover === 'OVX') {
+      return c.base;
+    }
+  }
+  return null;
+}
+
+function computeFlightCategory(ceilingFt, visibSM) {
+  let vis = null;
+  if (visibSM != null && visibSM !== '') {
+    if (typeof visibSM === 'string') {
+      vis = visibSM.includes('+') ? parseFloat(visibSM) + 0.1 : parseFloat(visibSM);
+    } else {
+      vis = visibSM;
+    }
+  }
+  let ceilCat = 'VFR';
+  if (ceilingFt != null) {
+    if (ceilingFt < 500) ceilCat = 'LIFR';
+    else if (ceilingFt < 1000) ceilCat = 'IFR';
+    else if (ceilingFt <= 3000) ceilCat = 'MVFR';
+  }
+  let visCat = 'VFR';
+  if (vis != null) {
+    if (vis < 1) visCat = 'LIFR';
+    else if (vis < 3) visCat = 'IFR';
+    else if (vis <= 5) visCat = 'MVFR';
+  }
+  const severity = { LIFR: 3, IFR: 2, MVFR: 1, VFR: 0 };
+  return severity[ceilCat] >= severity[visCat] ? ceilCat : visCat;
+}
+
+function getTafPeriodCategory(period) {
+  const ceiling = getCeilingFromClouds(period.clouds);
+  const vis = period.visib;
+  if (ceiling == null && (vis == null || vis === '')) return null;
+  return computeFlightCategory(ceiling, vis);
+}
+
+function worseCat(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const s = { VFR: 0, MVFR: 1, IFR: 2, LIFR: 3 };
+  return (s[a] || 0) >= (s[b] || 0) ? a : b;
+}
+
+function getForecastCategoryFromTaf(taf, targetTime) {
+  if (!taf || !taf.fcsts || taf.fcsts.length === 0) return null;
+  if (targetTime < taf.validTimeFrom || targetTime >= taf.validTimeTo) return null;
+  const basePeriods = taf.fcsts.filter(f => !f.fcstChange);
+  const changeGroups = taf.fcsts.filter(f => f.fcstChange);
+  let baseCat = null;
+  for (const period of basePeriods) {
+    if (period.timeFrom <= targetTime && targetTime < period.timeTo) {
+      baseCat = getTafPeriodCategory(period);
+      break;
+    }
+  }
+  for (const cg of changeGroups) {
+    if (cg.fcstChange !== 'BECMG') continue;
+    if (cg.timeFrom <= targetTime) {
+      baseCat = worseCat(baseCat, getTafPeriodCategory(cg));
+    }
+  }
+  let worstCat = baseCat;
+  for (const cg of changeGroups) {
+    if (cg.fcstChange === 'BECMG') continue;
+    if (cg.timeFrom <= targetTime && targetTime < cg.timeTo) {
+      worstCat = worseCat(worstCat, getTafPeriodCategory(cg));
+    }
+  }
+  return worstCat;
+}
+
+// ─── HTTPS JSON Helper ──────────────────────────────────────
+
+function httpsGetJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const options = {
+      hostname: parsed.hostname,
+      path: parsed.pathname + parsed.search,
+      headers: headers || {},
+    };
+    https.get(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { resolve(JSON.parse(body)); }
+          catch (e) { reject(new Error(`Invalid JSON from ${url}`)); }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode} from ${url}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+// ─── Weather History Storage ────────────────────────────────
+
+function storeMetarSnapshots(fetchTime, metarArray) {
+  if (!Array.isArray(metarArray) || metarArray.length === 0) return 0;
+  const ft = fetchTime.toISOString();
+  let count = 0;
+  db.exec('BEGIN');
+  try {
+    for (const m of metarArray) {
+      if (!m.icaoId) continue;
+      const ceiling = getCeilingFromClouds(m.clouds);
+      insertMetarStmt.run(
+        ft, m.icaoId, m.fltCat || null,
+        m.temp ?? null, m.dewp ?? null,
+        m.wdir ?? null, m.wspd ?? null, m.wgst ?? null,
+        m.visib != null ? String(m.visib) : null,
+        m.altim ?? null, ceiling,
+        m.wxString || null, m.rawOb || null,
+        m.reportTime || null,
+        JSON.stringify(m)
+      );
+      count++;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('[HISTORY] Failed to store METAR snapshots:', err.message);
+    return 0;
+  }
+  return count;
+}
+
+function storeTafSnapshots(fetchTime, tafArray) {
+  if (!Array.isArray(tafArray) || tafArray.length === 0) return 0;
+  const ft = fetchTime.toISOString();
+  const nowSec = Math.floor(fetchTime.getTime() / 1000);
+  let count = 0;
+  db.exec('BEGIN');
+  try {
+    for (const t of tafArray) {
+      if (!t.icaoId) continue;
+      const catNow = getForecastCategoryFromTaf(t, nowSec);
+      const cat2h = getForecastCategoryFromTaf(t, nowSec + 2 * 3600);
+      const cat4h = getForecastCategoryFromTaf(t, nowSec + 4 * 3600);
+      const cat8h = getForecastCategoryFromTaf(t, nowSec + 8 * 3600);
+      const cat24h = getForecastCategoryFromTaf(t, nowSec + 24 * 3600);
+      const validFrom = t.validTimeFrom ? new Date(t.validTimeFrom * 1000).toISOString() : null;
+      const validTo = t.validTimeTo ? new Date(t.validTimeTo * 1000).toISOString() : null;
+      insertTafStmt.run(
+        ft, t.icaoId, validFrom, validTo,
+        catNow, cat2h, cat4h, cat8h, cat24h,
+        t.rawTAF || null,
+        JSON.stringify(t)
+      );
+      count++;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('[HISTORY] Failed to store TAF snapshots:', err.message);
+    return 0;
+  }
+  return count;
+}
+
+// ─── Airport List Management ────────────────────────────────
+
+async function refreshAirportList() {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    if (VERBOSE) console.log('[HISTORY] No API key, skipping airport list refresh');
+    return [];
+  }
+  try {
+    const allAirports = [];
+    let page = 1;
+    const limit = 100;
+    while (true) {
+      const url = `https://api.core.openaip.net/api/airports?country=AT&page=${page}&limit=${limit}`;
+      const data = await httpsGetJson(url, { 'x-openaip-api-key': apiKey });
+      const items = data.items || data;
+      if (Array.isArray(items)) allAirports.push(...items);
+      const totalPages = data.totalPages || Math.ceil((data.totalCount || 0) / limit);
+      if (page >= totalPages || !Array.isArray(items) || items.length < limit) break;
+      page++;
+    }
+
+    // Filter out heliports (type 4 and 7) — same filter as app.js
+    const filtered = allAirports.filter(a => a.type !== 4 && a.type !== 7 && a.icaoCode);
+
+    // Store in tracked_airports
+    const upsert = db.prepare(`
+      INSERT OR REPLACE INTO tracked_airports (icao_id, name, lat, lon, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const now = new Date().toISOString();
+    db.exec('BEGIN');
+    for (const a of filtered) {
+      const coords = a.geometry?.coordinates;
+      upsert.run(a.icaoCode, a.name || '', coords?.[1] ?? null, coords?.[0] ?? null, now);
+    }
+    db.exec('COMMIT');
+
+    if (VERBOSE) console.log(`[HISTORY] Updated tracked airports: ${filtered.length}`);
+    return filtered.map(a => a.icaoCode);
+  } catch (err) {
+    console.error('[HISTORY] Failed to refresh airport list:', err.message);
+    return [];
+  }
+}
+
+function getTrackedIcaoCodes() {
+  const rows = db.prepare('SELECT icao_id FROM tracked_airports').all();
+  return rows.map(r => r.icao_id);
+}
+
+// ─── Scheduled History Fetch ────────────────────────────────
+
+let historyFetchTimer = null;
+let nextHistoryFetchTime = null;
+
+async function performHistoryFetch() {
+  let icaoCodes = getTrackedIcaoCodes();
+  if (icaoCodes.length === 0) {
+    if (VERBOSE) console.log('[HISTORY] No tracked airports, refreshing list...');
+    icaoCodes = await refreshAirportList();
+  }
+  if (icaoCodes.length === 0) {
+    console.warn('[HISTORY] No airports to fetch weather for');
+    return;
+  }
+
+  const fetchTime = new Date();
+  const batchSize = 40;
+  let allMetar = [];
+  let allTaf = [];
+
+  for (let i = 0; i < icaoCodes.length; i += batchSize) {
+    const batch = icaoCodes.slice(i, i + batchSize).join(',');
+    try {
+      const metarUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(batch)}&format=json`;
+      const metarData = await httpsGetJson(metarUrl);
+      if (Array.isArray(metarData)) allMetar.push(...metarData);
+    } catch (err) {
+      console.warn(`[HISTORY] METAR batch fetch failed:`, err.message);
+    }
+    try {
+      const tafUrl = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(batch)}&format=json`;
+      const tafData = await httpsGetJson(tafUrl);
+      if (Array.isArray(tafData)) allTaf.push(...tafData);
+    } catch (err) {
+      console.warn(`[HISTORY] TAF batch fetch failed:`, err.message);
+    }
+  }
+
+  const metarCount = storeMetarSnapshots(fetchTime, allMetar);
+  const tafCount = storeTafSnapshots(fetchTime, allTaf);
+
+  // Also update the in-memory cache so client requests benefit
+  if (allMetar.length > 0) {
+    const ids = allMetar.map(m => m.icaoId).join(',');
+    setCache(`metar:${ids}`, 200, JSON.stringify(allMetar));
+  }
+  if (allTaf.length > 0) {
+    const ids = allTaf.map(t => t.icaoId).join(',');
+    setCache(`taf:${ids}`, 200, JSON.stringify(allTaf));
+  }
+
+  console.log(`[HISTORY] Stored ${metarCount} METARs, ${tafCount} TAFs at ${fetchTime.toISOString()}`);
+}
+
+function scheduleHistoryFetch() {
+  if (historyFetchTimer) clearTimeout(historyFetchTimer);
+  nextHistoryFetchTime = Date.now() + HISTORY_FETCH_INTERVAL;
+  historyFetchTimer = setTimeout(async () => {
+    try { await performHistoryFetch(); }
+    catch (err) { console.error('[HISTORY] Scheduled fetch failed:', err.message); }
+    scheduleHistoryFetch();
+  }, HISTORY_FETCH_INTERVAL);
+}
+
+// ─── Data Purge (3-year retention) ──────────────────────────
+
+function purgeOldData() {
+  const cutoff = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const metarResult = db.prepare('DELETE FROM metar_history WHERE fetch_time < ?').run(cutoff);
+  const tafResult = db.prepare('DELETE FROM taf_history WHERE fetch_time < ?').run(cutoff);
+  const total = metarResult.changes + tafResult.changes;
+  if (total > 0 || VERBOSE) {
+    console.log(`[HISTORY] Purged ${metarResult.changes} METARs + ${tafResult.changes} TAFs older than ${HISTORY_RETENTION_DAYS} days`);
+  }
+}
+
+// Run purge daily
+setInterval(purgeOldData, 24 * 60 * 60 * 1000);
+// Refresh airport list weekly
+setInterval(() => refreshAirportList().catch(e => console.error('[HISTORY] Airport refresh error:', e.message)), AIRPORT_LIST_REFRESH_INTERVAL);
 
 function getCached(key, ttl) {
   const entry = cache.get(key);
@@ -138,6 +511,8 @@ function proxyMetar(req, res, query) {
   if (force) {
     cache.delete(cacheKey);
     if (VERBOSE) console.log(`[METAR] CACHE INVALIDATED (force refresh)`);
+    // Reset the 2h history fetch timer on manual refresh
+    scheduleHistoryFetch();
   }
 
   const cached = getCached(cacheKey, WEATHER_CACHE_TTL);
@@ -161,7 +536,14 @@ function proxyMetar(req, res, query) {
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
       if (VERBOSE) console.log(`[METAR] <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
-      if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
+      if (proxyRes.statusCode === 200) {
+        setCache(cacheKey, proxyRes.statusCode, body);
+        // Store in history
+        try {
+          const parsed = JSON.parse(body);
+          if (Array.isArray(parsed)) storeMetarSnapshots(new Date(), parsed);
+        } catch (e) { /* ignore parse errors */ }
+      }
       logCall('metar', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
@@ -220,7 +602,14 @@ function proxyTaf(req, res, query) {
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
       if (VERBOSE) console.log(`[TAF]   <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
-      if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
+      if (proxyRes.statusCode === 200) {
+        setCache(cacheKey, proxyRes.statusCode, body);
+        // Store in history
+        try {
+          const parsed = JSON.parse(body);
+          if (Array.isArray(parsed)) storeTafSnapshots(new Date(), parsed);
+        } catch (e) { /* ignore parse errors */ }
+      }
       logCall('taf', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
       res.writeHead(proxyRes.statusCode, {
         'Content-Type': 'application/json',
@@ -363,6 +752,143 @@ function handleConfigPost(req, res) {
   });
 }
 
+// ─── History API Endpoints ──────────────────────────────────
+
+function handleHistoryTimeline(req, res, query) {
+  const from = query.from;
+  const to = query.to;
+  if (!from || !to) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing from/to parameters' }));
+    return;
+  }
+
+  let icaoFilter = null;
+  if (query.icao && query.icao !== 'all') {
+    icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
+  }
+
+  // METAR timeline
+  const metarResult = {};
+  let metarRows;
+  if (icaoFilter) {
+    const placeholders = icaoFilter.map(() => '?').join(',');
+    metarRows = db.prepare(`
+      SELECT icao_id, fetch_time, flt_cat FROM metar_history
+      WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(...icaoFilter, from, to);
+  } else {
+    metarRows = db.prepare(`
+      SELECT icao_id, fetch_time, flt_cat FROM metar_history
+      WHERE fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(from, to);
+  }
+  for (const row of metarRows) {
+    if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
+    metarResult[row.icao_id].push({ t: row.fetch_time, cat: row.flt_cat });
+  }
+
+  // TAF timeline
+  const tafResult = {};
+  let tafRows;
+  if (icaoFilter) {
+    const placeholders = icaoFilter.map(() => '?').join(',');
+    tafRows = db.prepare(`
+      SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
+      WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(...icaoFilter, from, to);
+  } else {
+    tafRows = db.prepare(`
+      SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
+      WHERE fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(from, to);
+  }
+  for (const row of tafRows) {
+    if (!tafResult[row.icao_id]) tafResult[row.icao_id] = [];
+    tafResult[row.icao_id].push({
+      t: row.fetch_time,
+      cat_now: row.flt_cat_now, cat_2h: row.flt_cat_2h,
+      cat_4h: row.flt_cat_4h, cat_8h: row.flt_cat_8h, cat_24h: row.flt_cat_24h,
+    });
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({ metar: metarResult, taf: tafResult }));
+}
+
+function handleHistoryDetail(req, res, query) {
+  const icao = (query.icao || '').toUpperCase();
+  const time = query.time;
+  if (!icao || !time) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing icao/time parameters' }));
+    return;
+  }
+
+  const metar = db.prepare(`
+    SELECT * FROM metar_history WHERE icao_id = ?
+    ORDER BY ABS(julianday(fetch_time) - julianday(?)) LIMIT 1
+  `).get(icao, time);
+
+  const taf = db.prepare(`
+    SELECT * FROM taf_history WHERE icao_id = ?
+    ORDER BY ABS(julianday(fetch_time) - julianday(?)) LIMIT 1
+  `).get(icao, time);
+
+  const result = {};
+  if (metar) {
+    result.metar = { ...metar };
+    try { result.metar.metar_json = JSON.parse(metar.metar_json); } catch (e) {}
+  }
+  if (taf) {
+    result.taf = { ...taf };
+    try { result.taf.taf_json = JSON.parse(taf.taf_json); } catch (e) {}
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify(result));
+}
+
+function handleHistoryAirports(req, res) {
+  const rows = db.prepare(`
+    SELECT t.icao_id, t.name, t.lat, t.lon,
+      (SELECT COUNT(*) FROM metar_history m WHERE m.icao_id = t.icao_id) as metar_count,
+      (SELECT COUNT(*) FROM taf_history f WHERE f.icao_id = t.icao_id) as taf_count
+    FROM tracked_airports t
+    ORDER BY t.name
+  `).all();
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({ airports: rows }));
+}
+
+function handleHistoryStats(req, res) {
+  const totalMetar = db.prepare('SELECT COUNT(*) as c FROM metar_history').get().c;
+  const totalTaf = db.prepare('SELECT COUNT(*) as c FROM taf_history').get().c;
+  const oldest = db.prepare('SELECT MIN(fetch_time) as t FROM metar_history').get().t;
+  const newest = db.prepare('SELECT MAX(fetch_time) as t FROM metar_history').get().t;
+  const airportCount = db.prepare('SELECT COUNT(*) as c FROM tracked_airports').get().c;
+
+  let dbSizeBytes = 0;
+  try { dbSizeBytes = fs.statSync(HISTORY_DB_PATH).size; } catch (e) {}
+
+  const nextFetchIn = nextHistoryFetchTime ? Math.max(0, Math.round((nextHistoryFetchTime - Date.now()) / 1000)) : null;
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({
+    total_metar: totalMetar, total_taf: totalTaf,
+    oldest, newest, airport_count: airportCount,
+    db_size_bytes: dbSizeBytes,
+    next_fetch_in_seconds: nextFetchIn,
+  }));
+}
+
+// ─── HTTP Server ────────────────────────────────────────────
+
 const server = http.createServer((req, res) => {
   const parsed = new URL(req.url, `http://localhost:${PORT}`);
   const query = Object.fromEntries(parsed.searchParams);
@@ -377,6 +903,14 @@ const server = http.createServer((req, res) => {
     handleConfigGet(req, res);
   } else if (parsed.pathname === '/api/config' && req.method === 'POST') {
     handleConfigPost(req, res);
+  } else if (parsed.pathname === '/api/history/timeline') {
+    handleHistoryTimeline(req, res, query);
+  } else if (parsed.pathname === '/api/history/detail') {
+    handleHistoryDetail(req, res, query);
+  } else if (parsed.pathname === '/api/history/airports') {
+    handleHistoryAirports(req, res);
+  } else if (parsed.pathname === '/api/history/stats') {
+    handleHistoryStats(req, res);
   } else if (parsed.pathname === '/api/stats') {
     const cacheEntries = [];
     for (const [key, entry] of cache) {
@@ -400,28 +934,47 @@ const server = http.createServer((req, res) => {
 // Load cache from disk before starting server
 loadCacheFromDisk();
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`\n  Austria Airport VFR Status Map`);
   console.log(`  ==============================`);
   console.log(`  Server running at:  http://localhost:${PORT}`);
   console.log(`  METAR proxy at:     http://localhost:${PORT}/api/metar?ids=LOWW`);
   console.log(`  TAF proxy at:       http://localhost:${PORT}/api/taf?ids=LOWW`);
   console.log(`  Airports proxy at:  http://localhost:${PORT}/api/airports?country=AT&page=1&limit=100`);
+  console.log(`  Weather history:    http://localhost:${PORT}/history.html`);
   console.log(`  Weather cache TTL:  ${WEATHER_CACHE_TTL / 1000}s (1 hour)`);
   console.log(`  Airport cache TTL:  ${AIRPORT_CACHE_TTL / 1000}s (7 days)`);
+  console.log(`  History fetch:      every ${HISTORY_FETCH_INTERVAL / 1000 / 60}min`);
+  console.log(`  History retention:  ${HISTORY_RETENTION_DAYS} days`);
   console.log(`  Verbose mode:       ${VERBOSE ? 'ON' : 'OFF (use --verbose or -v)'}`);
   console.log(`\n  Press Ctrl+C to stop.\n`);
+
+  // Bootstrap airport list and perform initial history fetch
+  try {
+    const icaos = getTrackedIcaoCodes();
+    if (icaos.length === 0) {
+      console.log('[HISTORY] No tracked airports, fetching airport list...');
+      await refreshAirportList();
+    }
+    console.log(`[HISTORY] Tracked airports: ${getTrackedIcaoCodes().length}`);
+    console.log('[HISTORY] Performing initial weather fetch...');
+    await performHistoryFetch();
+  } catch (err) {
+    console.error('[HISTORY] Initial fetch failed:', err.message);
+  }
+
+  // Schedule recurring fetches
+  scheduleHistoryFetch();
+  purgeOldData(); // Run purge on startup too
 });
 
-// Save cache on graceful shutdown
-process.on('SIGINT', () => {
+// Save cache and close DB on graceful shutdown
+function shutdown() {
   console.log('\n\nShutting down gracefully...');
   saveCacheToDisk();
+  try { db.close(); } catch (e) {}
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', () => {
-  console.log('\n\nShutting down gracefully...');
-  saveCacheToDisk();
-  process.exit(0);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
