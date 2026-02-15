@@ -34,6 +34,7 @@ The application is a self-contained Node.js server with zero npm dependencies. I
 | `history.html` | 784 lines | Self-contained history comparison page (HTML + CSS + JS inline) |
 | `help.html` | 272 lines | User-facing documentation |
 | `stats.html` | 307 lines | Internal API proxy stats dashboard |
+| `log.html` | ~330 lines | Server log viewer with level/category filters, auto-refresh |
 | `favicon.svg` | SVG icon | |
 | `Dockerfile` | 10 lines | `node:22-alpine` image, copies files, exposes 5556 |
 | `docker-compose.yml` | 10 lines | Single service, mounts `./data` volume |
@@ -45,6 +46,7 @@ The application is a self-contained Node.js server with zero npm dependencies. I
 |------|-------------|
 | `config.json` | Stores the OpenAIP API key on disk: `{"openaipApiKey": "..."}` |
 | `weather_history.db` | SQLite database for METAR/TAF history (~73 KB initial, grows ~170 MB/year) |
+| `server.log` | Append-only TSV log file (rotated at 5 MB). Format: `timestamp\tlevel\tcategory\tmessage\tdetail` |
 
 ### `.cache.json` (gitignored)
 
@@ -126,6 +128,7 @@ Map<string, { statusCode: number, body: string, time: number }>
 | GET | `/api/history/detail?icao=LOWW&time=...` | `handleHistoryDetail` | Full METAR + TAF at a specific point in time |
 | GET | `/api/history/airports` | `handleHistoryAirports` | All tracked airports with snapshot counts |
 | GET | `/api/history/stats` | `handleHistoryStats` | DB stats: counts, size, range, next fetch timer |
+| GET | `/api/log?n=200&level=...&category=...` | `handleLogApi` | Server log entries (TSV file, newest last) |
 | GET | `/*` | `serveStatic` | Static file serving (blocks `/data/*`) |
 
 ### Custom Response Headers

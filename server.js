@@ -10,13 +10,22 @@ const { DatabaseSync } = require('node:sqlite');
 
 const PORT = process.env.PORT || 5556;
 const VERBOSE = process.argv.includes('--verbose') || process.argv.includes('-v');
+const PURGE_ON_START = process.argv.includes('--purge');
 const WEATHER_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const AIRPORT_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const CACHE_FILE = path.join(__dirname, '.cache.json');
 const HISTORY_DB_PATH = path.join(__dirname, 'data', 'weather_history.db');
 const HISTORY_FETCH_INTERVAL = 2 * 60 * 60 * 1000; // 2 hours
 const HISTORY_RETENTION_DAYS = 3 * 365; // ~1095 days
+const PURGE_OLDER_THAN_DAYS = (() => {
+  const idx = process.argv.indexOf('--older-than');
+  if (idx === -1 || idx + 1 >= process.argv.length) return HISTORY_RETENTION_DAYS;
+  const val = parseInt(process.argv[idx + 1]);
+  return isNaN(val) || val < 1 ? HISTORY_RETENTION_DAYS : val;
+})();
 const AIRPORT_LIST_REFRESH_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 7 days
+const LOG_FILE = path.join(__dirname, 'data', 'server.log');
+const LOG_MAX_ENTRIES = 200; // max entries returned via API
 
 // Persistent config stored in data/config.json
 const CONFIG_PATH = path.join(__dirname, 'data', 'config.json');
@@ -35,6 +44,64 @@ function getApiKey() {
   return process.env.OPENAIP_API_KEY || readConfig().openaipApiKey || null;
 }
 
+// ─── Structured Log File ────────────────────────────────────
+
+function appendLog(level, category, message, detail) {
+  const ts = new Date().toISOString();
+  const line = `${ts}\t${level}\t${category}\t${message}\t${detail || ''}\n`;
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    fs.appendFileSync(LOG_FILE, line);
+  } catch (e) { /* ignore write errors */ }
+  // Also log to console
+  const prefix = category ? `[${category}]` : '';
+  if (level === 'ERROR') console.error(`${prefix} ${message}`, detail || '');
+  else if (level === 'WARN') console.warn(`${prefix} ${message}`, detail || '');
+  else if (VERBOSE || level !== 'DEBUG') console.log(`${prefix} ${message}`, detail || '');
+}
+
+function readLog(n, levelFilter, categoryFilter) {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return [];
+    const lines = fs.readFileSync(LOG_FILE, 'utf-8').splitlines ?
+      fs.readFileSync(LOG_FILE, 'utf-8').split('\n') :
+      fs.readFileSync(LOG_FILE, 'utf-8').split('\n');
+    const entries = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const parts = line.split('\t');
+      if (parts.length < 3) continue;
+      const entry = { time: parts[0], level: parts[1], category: parts[2], message: parts[3] || '', detail: parts[4] || '' };
+      if (levelFilter && entry.level !== levelFilter) continue;
+      if (categoryFilter && entry.category !== categoryFilter) continue;
+      entries.push(entry);
+    }
+    return entries.slice(-n);
+  } catch (e) {
+    return [];
+  }
+}
+
+function logInfo(category, message, detail) { appendLog('INFO', category, message, detail); }
+function logWarn(category, message, detail) { appendLog('WARN', category, message, detail); }
+function logError(category, message, detail) { appendLog('ERROR', category, message, detail); }
+function logDebug(category, message, detail) { appendLog('DEBUG', category, message, detail); }
+
+// ─── Log File Rotation ──────────────────────────────────────
+
+function rotateLogIfNeeded() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+    const stat = fs.statSync(LOG_FILE);
+    if (stat.size > 5 * 1024 * 1024) { // > 5 MB
+      const rotated = LOG_FILE + '.old';
+      if (fs.existsSync(rotated)) fs.unlinkSync(rotated);
+      fs.renameSync(LOG_FILE, rotated);
+      appendLog('INFO', 'SYSTEM', 'Log file rotated (exceeded 5 MB)');
+    }
+  } catch (e) { /* ignore */ }
+}
+
 // In-memory cache keyed by request URL
 const cache = new Map();
 
@@ -48,10 +115,10 @@ function loadCacheFromDisk() {
         cache.set(key, entry);
         loaded++;
       }
-      console.log(`Loaded ${loaded} cache entries from disk`);
+      logInfo('CACHE', `Loaded ${loaded} cache entries from disk`);
     }
   } catch (err) {
-    console.warn('Failed to load cache from disk:', err.message);
+    logWarn('CACHE', 'Failed to load cache from disk', err.message);
   }
 }
 
@@ -60,9 +127,9 @@ function saveCacheToDisk() {
   try {
     const data = Object.fromEntries(cache);
     fs.writeFileSync(CACHE_FILE, JSON.stringify(data), 'utf8');
-    if (VERBOSE) console.log(`Saved ${cache.size} cache entries to disk`);
+    logDebug('CACHE', `Saved ${cache.size} cache entries to disk`);
   } catch (err) {
-    console.warn('Failed to save cache to disk:', err.message);
+    logWarn('CACHE', 'Failed to save cache to disk', err.message);
   }
 }
 
@@ -132,7 +199,7 @@ const insertTafStmt = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
-console.log(`Weather history DB: ${HISTORY_DB_PATH}`);
+logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
 
 // ─── Flight Category Computation (ported from app.js) ───────
 
@@ -264,7 +331,7 @@ function storeMetarSnapshots(fetchTime, metarArray) {
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
-    console.error('[HISTORY] Failed to store METAR snapshots:', err.message);
+    logError('HISTORY', 'Failed to store METAR snapshots', err.message);
     return 0;
   }
   return count;
@@ -297,7 +364,7 @@ function storeTafSnapshots(fetchTime, tafArray) {
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
-    console.error('[HISTORY] Failed to store TAF snapshots:', err.message);
+    logError('HISTORY', 'Failed to store TAF snapshots', err.message);
     return 0;
   }
   return count;
@@ -308,7 +375,7 @@ function storeTafSnapshots(fetchTime, tafArray) {
 async function refreshAirportList() {
   const apiKey = getApiKey();
   if (!apiKey) {
-    if (VERBOSE) console.log('[HISTORY] No API key, skipping airport list refresh');
+    logDebug('HISTORY', 'No API key, skipping airport list refresh');
     return [];
   }
   try {
@@ -341,10 +408,10 @@ async function refreshAirportList() {
     }
     db.exec('COMMIT');
 
-    if (VERBOSE) console.log(`[HISTORY] Updated tracked airports: ${filtered.length}`);
+    logInfo('HISTORY', `Updated tracked airports: ${filtered.length}`);
     return filtered.map(a => a.icaoCode);
   } catch (err) {
-    console.error('[HISTORY] Failed to refresh airport list:', err.message);
+    logError('HISTORY', 'Failed to refresh airport list', err.message);
     return [];
   }
 }
@@ -362,11 +429,11 @@ let nextHistoryFetchTime = null;
 async function performHistoryFetch() {
   let icaoCodes = getTrackedIcaoCodes();
   if (icaoCodes.length === 0) {
-    if (VERBOSE) console.log('[HISTORY] No tracked airports, refreshing list...');
+    logDebug('HISTORY', 'No tracked airports, refreshing list...');
     icaoCodes = await refreshAirportList();
   }
   if (icaoCodes.length === 0) {
-    console.warn('[HISTORY] No airports to fetch weather for');
+    logWarn('HISTORY', 'No airports to fetch weather for');
     return;
   }
 
@@ -382,14 +449,14 @@ async function performHistoryFetch() {
       const metarData = await httpsGetJson(metarUrl);
       if (Array.isArray(metarData)) allMetar.push(...metarData);
     } catch (err) {
-      console.warn(`[HISTORY] METAR batch fetch failed:`, err.message);
+      logWarn('HISTORY', 'METAR batch fetch failed', err.message);
     }
     try {
       const tafUrl = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(batch)}&format=json`;
       const tafData = await httpsGetJson(tafUrl);
       if (Array.isArray(tafData)) allTaf.push(...tafData);
     } catch (err) {
-      console.warn(`[HISTORY] TAF batch fetch failed:`, err.message);
+      logWarn('HISTORY', 'TAF batch fetch failed', err.message);
     }
   }
 
@@ -406,7 +473,7 @@ async function performHistoryFetch() {
     setCache(`taf:${ids}`, 200, JSON.stringify(allTaf));
   }
 
-  console.log(`[HISTORY] Stored ${metarCount} METARs, ${tafCount} TAFs at ${fetchTime.toISOString()}`);
+  logInfo('HISTORY', `Stored ${metarCount} METARs, ${tafCount} TAFs`, fetchTime.toISOString());
 }
 
 function scheduleHistoryFetch() {
@@ -414,27 +481,24 @@ function scheduleHistoryFetch() {
   nextHistoryFetchTime = Date.now() + HISTORY_FETCH_INTERVAL;
   historyFetchTimer = setTimeout(async () => {
     try { await performHistoryFetch(); }
-    catch (err) { console.error('[HISTORY] Scheduled fetch failed:', err.message); }
+    catch (err) { logError('HISTORY', 'Scheduled fetch failed', err.message); }
     scheduleHistoryFetch();
   }, HISTORY_FETCH_INTERVAL);
 }
 
 // ─── Data Purge (3-year retention) ──────────────────────────
 
-function purgeOldData() {
-  const cutoff = new Date(Date.now() - HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+function purgeOldData(days) {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const metarResult = db.prepare('DELETE FROM metar_history WHERE fetch_time < ?').run(cutoff);
   const tafResult = db.prepare('DELETE FROM taf_history WHERE fetch_time < ?').run(cutoff);
   const total = metarResult.changes + tafResult.changes;
-  if (total > 0 || VERBOSE) {
-    console.log(`[HISTORY] Purged ${metarResult.changes} METARs + ${tafResult.changes} TAFs older than ${HISTORY_RETENTION_DAYS} days`);
-  }
+  logInfo('HISTORY', `Purged ${metarResult.changes} METARs + ${tafResult.changes} TAFs older than ${days} days (cutoff: ${cutoff})`);
+  return total;
 }
 
-// Run purge daily
-setInterval(purgeOldData, 24 * 60 * 60 * 1000);
 // Refresh airport list weekly
-setInterval(() => refreshAirportList().catch(e => console.error('[HISTORY] Airport refresh error:', e.message)), AIRPORT_LIST_REFRESH_INTERVAL);
+setInterval(() => refreshAirportList().catch(e => logError('HISTORY', 'Airport refresh error', e.message)), AIRPORT_LIST_REFRESH_INTERVAL);
 
 function getCached(key, ttl) {
   const entry = cache.get(key);
@@ -510,7 +574,7 @@ function proxyMetar(req, res, query) {
 
   if (force) {
     cache.delete(cacheKey);
-    if (VERBOSE) console.log(`[METAR] CACHE INVALIDATED (force refresh)`);
+    logDebug('METAR', 'Cache invalidated (force refresh)');
     // Reset the 2h history fetch timer on manual refresh
     scheduleHistoryFetch();
   }
@@ -519,7 +583,7 @@ function proxyMetar(req, res, query) {
   if (cached) {
     stats.metar.cached++;
     logCall('metar', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
-    if (VERBOSE) console.log(`[METAR] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+    logDebug('METAR', `Cache hit (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
     res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
     res.end(cached.body);
     return;
@@ -528,14 +592,14 @@ function proxyMetar(req, res, query) {
   const awcUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
 
-  if (VERBOSE) console.log(`[METAR] --> GET ${awcUrl}`);
+  logDebug('METAR', `Fetching from upstream`, awcUrl);
 
   https.get(awcUrl, (proxyRes) => {
     let body = '';
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
-      if (VERBOSE) console.log(`[METAR] <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
+      logDebug('METAR', `Upstream response ${proxyRes.statusCode}`, `${body.length} bytes, ${duration}ms`);
       if (proxyRes.statusCode === 200) {
         setCache(cacheKey, proxyRes.statusCode, body);
         // Store in history
@@ -557,8 +621,7 @@ function proxyMetar(req, res, query) {
   }).on('error', (err) => {
     stats.metar.errors++;
     logCall('metar', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
-    if (VERBOSE) console.log(`[METAR] <-- ERROR ${err.message} (${Date.now() - startTime}ms)`);
-    console.error('METAR proxy error:', err.message);
+    logError('METAR', 'Proxy error', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to fetch METAR data' }));
   });
@@ -578,14 +641,14 @@ function proxyTaf(req, res, query) {
 
   if (force) {
     cache.delete(cacheKey);
-    if (VERBOSE) console.log(`[TAF]   CACHE INVALIDATED (force refresh)`);
+    logDebug('TAF', 'Cache invalidated (force refresh)');
   }
 
   const cached = getCached(cacheKey, WEATHER_CACHE_TTL);
   if (cached) {
     stats.taf.cached++;
     logCall('taf', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
-    if (VERBOSE) console.log(`[TAF]   CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+    logDebug('TAF', `Cache hit (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
     res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
     res.end(cached.body);
     return;
@@ -594,14 +657,14 @@ function proxyTaf(req, res, query) {
   const awcUrl = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
 
-  if (VERBOSE) console.log(`[TAF]   --> GET ${awcUrl}`);
+  logDebug('TAF', 'Fetching from upstream', awcUrl);
 
   https.get(awcUrl, (proxyRes) => {
     let body = '';
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
-      if (VERBOSE) console.log(`[TAF]   <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
+      logDebug('TAF', `Upstream response ${proxyRes.statusCode}`, `${body.length} bytes, ${duration}ms`);
       if (proxyRes.statusCode === 200) {
         setCache(cacheKey, proxyRes.statusCode, body);
         // Store in history
@@ -623,8 +686,7 @@ function proxyTaf(req, res, query) {
   }).on('error', (err) => {
     stats.taf.errors++;
     logCall('taf', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
-    if (VERBOSE) console.log(`[TAF]   <-- ERROR ${err.message} (${Date.now() - startTime}ms)`);
-    console.error('TAF proxy error:', err.message);
+    logError('TAF', 'Proxy error', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to fetch TAF data' }));
   });
@@ -648,14 +710,14 @@ function proxyAirports(req, res, query) {
 
   if (force) {
     cache.delete(cacheKey);
-    if (VERBOSE) console.log(`[AIRPORTS] CACHE INVALIDATED (force refresh)`);
+    logDebug('AIRPORTS', 'Cache invalidated (force refresh)');
   }
 
   const cached = getCached(cacheKey, AIRPORT_CACHE_TTL);
   if (cached) {
     stats.airports.cached++;
     logCall('airports', { time: Date.now(), cached: true, age: Math.round((Date.now() - cached.time) / 1000) });
-    if (VERBOSE) console.log(`[AIRPORTS] CACHE HIT (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
+    logDebug('AIRPORTS', `Cache hit (age ${Math.round((Date.now() - cached.time) / 1000)}s)`);
     res.writeHead(cached.statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time', 'X-Cache': 'HIT', 'X-Fetch-Time': new Date(cached.time).toISOString() });
     res.end(cached.body);
     return;
@@ -664,7 +726,7 @@ function proxyAirports(req, res, query) {
   const openaipUrl = `https://api.core.openaip.net/api/airports?country=${encodeURIComponent(country)}&page=${encodeURIComponent(page)}&limit=${encodeURIComponent(limit)}`;
   const startTime = Date.now();
 
-  if (VERBOSE) console.log(`[AIRPORTS] --> GET ${openaipUrl}`);
+  logDebug('AIRPORTS', 'Fetching from upstream', openaipUrl);
 
   const parsed = new URL(openaipUrl);
   https.get({
@@ -676,7 +738,7 @@ function proxyAirports(req, res, query) {
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
-      if (VERBOSE) console.log(`[AIRPORTS] <-- ${proxyRes.statusCode} (${body.length} bytes, ${duration}ms)`);
+      logDebug('AIRPORTS', `Upstream response ${proxyRes.statusCode}`, `${body.length} bytes, ${duration}ms`);
       if (proxyRes.statusCode === 200) setCache(cacheKey, proxyRes.statusCode, body);
       logCall('airports', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
       res.writeHead(proxyRes.statusCode, {
@@ -691,8 +753,7 @@ function proxyAirports(req, res, query) {
   }).on('error', (err) => {
     stats.airports.errors++;
     logCall('airports', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
-    if (VERBOSE) console.log(`[AIRPORTS] <-- ERROR ${err.message} (${Date.now() - startTime}ms)`);
-    console.error('Airports proxy error:', err.message);
+    logError('AIRPORTS', 'Proxy error', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to fetch airport data' }));
   });
@@ -723,7 +784,7 @@ function handleConfigPost(req, res) {
 
     // Validate by test-fetching from OpenAIP
     const testUrl = new URL('https://api.core.openaip.net/api/airports?country=AT&page=1&limit=1');
-    if (VERBOSE) console.log(`[CONFIG] Validating API key...`);
+    logDebug('CONFIG', 'Validating API key...');
     https.get({
       hostname: testUrl.hostname,
       path: testUrl.pathname + testUrl.search,
@@ -736,11 +797,11 @@ function handleConfigPost(req, res) {
           const config = readConfig();
           config.openaipApiKey = apiKey;
           writeConfig(config);
-          if (VERBOSE) console.log(`[CONFIG] API key saved`);
+          logInfo('CONFIG', 'API key saved');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
         } else {
-          if (VERBOSE) console.log(`[CONFIG] API key invalid (${testRes.statusCode})`);
+          logWarn('CONFIG', `API key invalid (${testRes.statusCode})`);
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Invalid API key (OpenAIP returned ${testRes.statusCode})` }));
         }
@@ -887,6 +948,27 @@ function handleHistoryStats(req, res) {
   }));
 }
 
+// ─── Log API Endpoint ───────────────────────────────────────
+
+function handleLogApi(req, res, query) {
+  const n = Math.min(parseInt(query.n) || LOG_MAX_ENTRIES, LOG_MAX_ENTRIES);
+  const level = query.level || null;
+  const category = query.category || null;
+  const entries = readLog(n, level, category);
+
+  // Also include log file stats
+  let fileSize = 0;
+  try { fileSize = fs.statSync(LOG_FILE).size; } catch (e) {}
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({
+    entries: entries,
+    total: entries.length,
+    file_size_bytes: fileSize,
+    log_file: LOG_FILE,
+  }));
+}
+
 // ─── HTTP Server ────────────────────────────────────────────
 
 const server = http.createServer((req, res) => {
@@ -911,6 +993,8 @@ const server = http.createServer((req, res) => {
     handleHistoryAirports(req, res);
   } else if (parsed.pathname === '/api/history/stats') {
     handleHistoryStats(req, res);
+  } else if (parsed.pathname === '/api/log') {
+    handleLogApi(req, res, query);
   } else if (parsed.pathname === '/api/stats') {
     const cacheEntries = [];
     for (const [key, entry] of cache) {
@@ -938,39 +1022,41 @@ server.listen(PORT, async () => {
   console.log(`\n  Austria Airport VFR Status Map`);
   console.log(`  ==============================`);
   console.log(`  Server running at:  http://localhost:${PORT}`);
-  console.log(`  METAR proxy at:     http://localhost:${PORT}/api/metar?ids=LOWW`);
-  console.log(`  TAF proxy at:       http://localhost:${PORT}/api/taf?ids=LOWW`);
-  console.log(`  Airports proxy at:  http://localhost:${PORT}/api/airports?country=AT&page=1&limit=100`);
   console.log(`  Weather history:    http://localhost:${PORT}/history.html`);
-  console.log(`  Weather cache TTL:  ${WEATHER_CACHE_TTL / 1000}s (1 hour)`);
-  console.log(`  Airport cache TTL:  ${AIRPORT_CACHE_TTL / 1000}s (7 days)`);
-  console.log(`  History fetch:      every ${HISTORY_FETCH_INTERVAL / 1000 / 60}min`);
-  console.log(`  History retention:  ${HISTORY_RETENTION_DAYS} days`);
+  console.log(`  Server log:         http://localhost:${PORT}/log.html`);
   console.log(`  Verbose mode:       ${VERBOSE ? 'ON' : 'OFF (use --verbose or -v)'}`);
   console.log(`\n  Press Ctrl+C to stop.\n`);
+
+  logInfo('SYSTEM', 'Server started', `http://localhost:${PORT}`);
+  rotateLogIfNeeded();
 
   // Bootstrap airport list and perform initial history fetch
   try {
     const icaos = getTrackedIcaoCodes();
     if (icaos.length === 0) {
-      console.log('[HISTORY] No tracked airports, fetching airport list...');
+      logInfo('HISTORY', 'No tracked airports, fetching airport list...');
       await refreshAirportList();
     }
-    console.log(`[HISTORY] Tracked airports: ${getTrackedIcaoCodes().length}`);
-    console.log('[HISTORY] Performing initial weather fetch...');
+    logInfo('HISTORY', `Tracked airports: ${getTrackedIcaoCodes().length}`);
+    logInfo('HISTORY', 'Performing initial weather fetch...');
     await performHistoryFetch();
   } catch (err) {
-    console.error('[HISTORY] Initial fetch failed:', err.message);
+    logError('HISTORY', 'Initial fetch failed', err.message);
   }
 
   // Schedule recurring fetches
   scheduleHistoryFetch();
-  purgeOldData(); // Run purge on startup too
+
+  // Only purge old data when explicitly requested via --purge flag
+  if (PURGE_ON_START) {
+    logInfo('SYSTEM', `Purging data older than ${PURGE_OLDER_THAN_DAYS} days (--purge flag)`);
+    purgeOldData(PURGE_OLDER_THAN_DAYS);
+  }
 });
 
 // Save cache and close DB on graceful shutdown
 function shutdown() {
-  console.log('\n\nShutting down gracefully...');
+  logInfo('SYSTEM', 'Server shutting down');
   saveCacheToDisk();
   try { db.close(); } catch (e) {}
   process.exit(0);

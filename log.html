@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Server Log — Austria Airport VFR Status Map</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f6fa;
+      color: #333;
+      line-height: 1.6;
+    }
+
+    .log-header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(8px);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .log-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    .log-header h1 span { color: #e63946; }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .auto-refresh-note {
+      font-size: 11px;
+      color: #999;
+    }
+    .back-btn {
+      padding: 6px 16px;
+      background: #1a1a2e;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+    }
+    .back-btn:hover { background: #2a2a4e; }
+
+    .content {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    /* Stats cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+      margin-bottom: 2px;
+    }
+    .card-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    .card-sub {
+      font-size: 11px;
+      color: #999;
+      margin-top: 1px;
+    }
+
+    /* Filters */
+    .filters {
+      background: white;
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .filter-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #999;
+    }
+    .filter-group select {
+      padding: 6px 10px;
+      border: 1.5px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .filter-group select:focus { border-color: #3498db; }
+    .filter-pills {
+      display: flex;
+      gap: 4px;
+    }
+    .filter-pill {
+      padding: 6px 12px;
+      border: 1.5px solid #ddd;
+      border-radius: 6px;
+      background: white;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #666;
+    }
+    .filter-pill:hover { background: #f0f0f0; }
+    .filter-pill.active {
+      background: #1a1a2e;
+      color: white;
+      border-color: #1a1a2e;
+    }
+    .filter-count {
+      margin-left: auto;
+      font-size: 12px;
+      color: #999;
+    }
+
+    /* Log table */
+    .log-section {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+    .log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .log-table th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #1a1a2e;
+      color: white;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      position: sticky;
+      top: 56px;
+      z-index: 10;
+    }
+    .log-table td {
+      padding: 7px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+    .log-table tr:last-child td { border-bottom: none; }
+    .log-table tr:hover td { background: #fafbfc; }
+
+    .log-table .col-time {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      white-space: nowrap;
+      color: #666;
+      width: 160px;
+    }
+    .log-table .col-level {
+      width: 70px;
+    }
+    .log-table .col-cat {
+      font-weight: 600;
+      color: #1a1a2e;
+      font-size: 11px;
+      white-space: nowrap;
+      width: 80px;
+    }
+    .log-table .col-msg {
+      color: #333;
+    }
+    .log-table .col-detail {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: #888;
+      word-break: break-all;
+      max-width: 300px;
+    }
+
+    /* Level badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .badge-info { background: #e3f2fd; color: #1565c0; }
+    .badge-warn { background: #fff3e0; color: #e65100; }
+    .badge-error { background: #fbe9e7; color: #c62828; }
+    .badge-debug { background: #f3f3f3; color: #888; }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      color: #999;
+      padding: 40px 20px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 768px) {
+      .log-header h1 { font-size: 15px; }
+      .filters { gap: 8px; }
+      .log-table .col-detail { display: none; }
+      .log-table .col-time { font-size: 10px; width: 120px; }
+      .log-table th { top: 50px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="log-header">
+    <h1><span>Server Log</span> — Austria VFR Map</h1>
+    <div class="header-right">
+      <span class="auto-refresh-note" id="autoRefreshNote"></span>
+      <a href="/" class="back-btn">Back to Map</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="cards" id="statsCards">
+      <div class="card"><div class="card-label">Loading...</div><div class="card-value">-</div></div>
+    </div>
+
+    <div class="filters">
+      <div class="filter-group">
+        <div class="filter-label">Level</div>
+        <div class="filter-pills" id="levelFilter">
+          <button class="filter-pill active" data-level="all">All</button>
+          <button class="filter-pill" data-level="ERROR">Error</button>
+          <button class="filter-pill" data-level="WARN">Warn</button>
+          <button class="filter-pill" data-level="INFO">Info</button>
+          <button class="filter-pill" data-level="DEBUG">Debug</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <div class="filter-label">Category</div>
+        <select id="categoryFilter">
+          <option value="all">All Categories</option>
+          <option value="SYSTEM">SYSTEM</option>
+          <option value="HISTORY">HISTORY</option>
+          <option value="METAR">METAR</option>
+          <option value="TAF">TAF</option>
+          <option value="AIRPORTS">AIRPORTS</option>
+          <option value="CONFIG">CONFIG</option>
+          <option value="CACHE">CACHE</option>
+          <option value="DB">DB</option>
+        </select>
+      </div>
+      <div class="filter-count" id="filterCount"></div>
+    </div>
+
+    <div class="log-section">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Time (UTC)</th>
+            <th>Level</th>
+            <th>Category</th>
+            <th>Message</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody id="logBody">
+          <tr><td colspan="5" class="empty">Loading log entries...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let currentLevel = 'all';
+    let currentCategory = 'all';
+    let allEntries = [];
+    let autoRefreshTimer = null;
+
+    // ─── Utilities ─────────────────────────────────────────
+
+    function fmtBytes(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+      return (b / 1048576).toFixed(1) + ' MB';
+    }
+
+    function fmtTime(isoStr) {
+      if (!isoStr) return '-';
+      const parts = isoStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+      if (!parts) return isoStr;
+      const hhmm = parts[4] + ':' + parts[5] + ':' + parts[6] + 'Z';
+      const dateStr = parts[3] + '.' + parts[2];
+      const today = new Date();
+      const todayISO = today.toISOString().slice(0, 10);
+      const dateISO = parts[1] + '-' + parts[2] + '-' + parts[3];
+      if (dateISO === todayISO) return hhmm;
+      return dateStr + ' ' + hhmm;
+    }
+
+    function escHtml(s) {
+      if (!s) return '';
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function levelBadge(level) {
+      const cls = {
+        'INFO': 'badge-info',
+        'WARN': 'badge-warn',
+        'ERROR': 'badge-error',
+        'DEBUG': 'badge-debug',
+      }[level] || 'badge-debug';
+      return '<span class="badge ' + cls + '">' + escHtml(level) + '</span>';
+    }
+
+    // ─── Data Loading ──────────────────────────────────────
+
+    async function loadLog() {
+      try {
+        const res = await fetch('/api/log?n=200');
+        const data = await res.json();
+
+        allEntries = data.entries || [];
+        renderStats(data);
+        renderEntries();
+      } catch (e) {
+        document.getElementById('logBody').innerHTML =
+          '<tr><td colspan="5" class="empty">Failed to load log: ' + escHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    function renderStats(data) {
+      const entries = data.entries || [];
+      const errorCount = entries.filter(e => e.level === 'ERROR').length;
+      const warnCount = entries.filter(e => e.level === 'WARN').length;
+      const infoCount = entries.filter(e => e.level === 'INFO').length;
+      const debugCount = entries.filter(e => e.level === 'DEBUG').length;
+
+      document.getElementById('statsCards').innerHTML = `
+        <div class="card">
+          <div class="card-label">Total Entries</div>
+          <div class="card-value">${entries.length}</div>
+          <div class="card-sub">Last ${entries.length} shown</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Errors</div>
+          <div class="card-value" style="color: ${errorCount > 0 ? '#c62828' : '#999'}">${errorCount}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Warnings</div>
+          <div class="card-value" style="color: ${warnCount > 0 ? '#e65100' : '#999'}">${warnCount}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Log File</div>
+          <div class="card-value">${fmtBytes(data.file_size_bytes || 0)}</div>
+          <div class="card-sub">data/server.log</div>
+        </div>
+      `;
+    }
+
+    function renderEntries() {
+      const tbody = document.getElementById('logBody');
+
+      // Apply filters
+      let filtered = allEntries;
+      if (currentLevel !== 'all') {
+        filtered = filtered.filter(e => e.level === currentLevel);
+      }
+      if (currentCategory !== 'all') {
+        filtered = filtered.filter(e => e.category === currentCategory);
+      }
+
+      document.getElementById('filterCount').textContent =
+        filtered.length + ' of ' + allEntries.length + ' entries';
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No log entries matching filters</td></tr>';
+        return;
+      }
+
+      // Show newest first
+      const reversed = filtered.slice().reverse();
+
+      tbody.innerHTML = reversed.map(e =>
+        '<tr>' +
+        '<td class="col-time">' + fmtTime(e.time) + '</td>' +
+        '<td class="col-level">' + levelBadge(e.level) + '</td>' +
+        '<td class="col-cat">' + escHtml(e.category) + '</td>' +
+        '<td class="col-msg">' + escHtml(e.message) + '</td>' +
+        '<td class="col-detail">' + escHtml(e.detail) + '</td>' +
+        '</tr>'
+      ).join('');
+    }
+
+    // ─── Event Handlers ────────────────────────────────────
+
+    document.getElementById('levelFilter').addEventListener('click', (e) => {
+      if (!e.target.classList.contains('filter-pill')) return;
+      document.querySelectorAll('#levelFilter .filter-pill').forEach(p => p.classList.remove('active'));
+      e.target.classList.add('active');
+      currentLevel = e.target.dataset.level;
+      renderEntries();
+    });
+
+    document.getElementById('categoryFilter').addEventListener('change', (e) => {
+      currentCategory = e.target.value;
+      renderEntries();
+    });
+
+    // ─── Init ──────────────────────────────────────────────
+
+    loadLog();
+    autoRefreshTimer = setInterval(loadLog, 5000);
+    document.getElementById('autoRefreshNote').textContent = 'Auto-refreshes every 5s';
+  </script>
+
+</body>
+</html>
