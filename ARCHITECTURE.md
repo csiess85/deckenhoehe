@@ -28,13 +28,13 @@ The application is a self-contained Node.js server with zero npm dependencies. I
 
 | File | Size | Purpose |
 |------|------|---------|
-| `server.js` | 981 lines | HTTP server, proxy, cache, SQLite history, scheduled fetching, all API endpoints |
+| `server.js` | ~1,083 lines | HTTP server, proxy, cache, SQLite history, scheduled fetching, structured logging, all API endpoints |
 | `app.js` | 1,579 lines | All frontend logic: map, markers, popups, TAF timeline, flight category computation, horizon selector, UX behaviors. Injects its own CSS. |
 | `index.html` | 523 lines | Main page shell: header, map container, API key dialog, loading overlay, stats bar, floating horizon pill |
 | `history.html` | 784 lines | Self-contained history comparison page (HTML + CSS + JS inline) |
 | `help.html` | 272 lines | User-facing documentation |
 | `stats.html` | 307 lines | Internal API proxy stats dashboard |
-| `log.html` | ~330 lines | Server log viewer with level/category filters, auto-refresh |
+| `log.html` | 450 lines | Server log viewer with level/category filters, auto-refresh every 5s |
 | `favicon.svg` | SVG icon | |
 | `Dockerfile` | 10 lines | `node:22-alpine` image, copies files, exposes 5556 |
 | `docker-compose.yml` | 10 lines | Single service, mounts `./data` volume |
@@ -47,6 +47,7 @@ The application is a self-contained Node.js server with zero npm dependencies. I
 | `config.json` | Stores the OpenAIP API key on disk: `{"openaipApiKey": "..."}` |
 | `weather_history.db` | SQLite database for METAR/TAF history (~73 KB initial, grows ~170 MB/year) |
 | `server.log` | Append-only TSV log file (rotated at 5 MB). Format: `timestamp\tlevel\tcategory\tmessage\tdetail` |
+| `server.log.old` | Previous log file (created on rotation, overwritten each time) |
 
 ### `.cache.json` (gitignored)
 
@@ -59,27 +60,29 @@ Serialized in-memory proxy cache. Written to disk every 5 minutes and on gracefu
 ### Module Structure (top to bottom)
 
 ```
-1.  Constants & Configuration          (lines 1-22)
-2.  Config read/write (API key)        (lines 24-36)
-3.  In-memory proxy cache              (lines 38-70)
-4.  SQLite Database Init               (lines 72-135)
-5.  Flight Category Functions          (lines 137-214)
-6.  HTTPS JSON Helper                  (lines 216-239)
-7.  Weather History Storage            (lines 241-304)
-8.  Airport List Management            (lines 306-355)
-9.  Scheduled History Fetch            (lines 357-420)
-10. Data Purge (3-year retention)      (lines 422-437)
-11. Proxy Cache Helpers                (lines 439-451)
-12. API Call Statistics                 (lines 453-465)
-13. Static File Server                 (lines 467-497)
-14. Proxy: METAR                       (lines 499-565)
-15. Proxy: TAF                         (lines 567-631)
-16. Proxy: Airports (OpenAIP)          (lines 633-699)
-17. Config API (GET/POST)              (lines 701-753)
-18. History API Endpoints              (lines 755-888)
-19. HTTP Server & Router               (lines 890-932)
-20. Startup Sequence                   (lines 934-969)
-21. Graceful Shutdown                  (lines 971-981)
+1.  Constants & Configuration          (lines 1-31)
+2.  Config read/write (API key)        (lines 33-45)
+3.  Structured Log File                (lines 47-88)
+4.  Log File Rotation                  (lines 90-106)
+5.  In-memory proxy cache              (lines 107-137)
+6.  SQLite Database Init               (lines 139-202)
+7.  Flight Category Functions          (lines 204-281)
+8.  HTTPS JSON Helper                  (lines 283-306)
+9.  Weather History Storage            (lines 308-371)
+10. Airport List Management            (lines 373-422)
+11. Scheduled History Fetch            (lines 424-497)
+12. Data Purge (3-year retention)      (lines 499-513)
+13. Proxy Cache Helpers                (lines 515-537)
+14. API Call Statistics                 (lines 539-553)
+15. Static File Server                 (lines 555-574)
+16. Proxy: METAR                       (lines 576-642)
+17. Proxy: TAF                         (lines 644-707)
+18. Proxy: Airports (OpenAIP)          (lines 709-774)
+19. Config API (GET/POST)              (lines 776-828)
+20. History API Endpoints              (lines 830-963)
+21. Log API Endpoint                   (lines 965-984)
+22. HTTP Server & Router               (lines 986-1073)
+23. Graceful Shutdown                  (lines 1075-1083)
 ```
 
 ### Constants
@@ -87,11 +90,16 @@ Serialized in-memory proxy cache. Written to disk every 5 minutes and on gracefu
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `PORT` | `5556` | HTTP server port (env `PORT` overrides) |
+| `VERBOSE` | `false` | Enables debug logging (`--verbose` or `-v` flag) |
+| `PURGE_ON_START` | `false` | Enables DB purge at startup (`--purge` flag) |
 | `WEATHER_CACHE_TTL` | 1 hour | In-memory cache lifetime for METAR/TAF proxy responses |
 | `AIRPORT_CACHE_TTL` | 7 days | In-memory cache lifetime for OpenAIP airport responses |
 | `HISTORY_FETCH_INTERVAL` | 2 hours | How often the server autonomously fetches weather for all airports |
-| `HISTORY_RETENTION_DAYS` | 1,095 days (~3 years) | Records older than this are purged daily |
+| `HISTORY_RETENTION_DAYS` | 1,095 days (~3 years) | Default retention period for DB purge |
+| `PURGE_OLDER_THAN_DAYS` | 1,095 days | Actual purge threshold (overridable via `--older-than <days>`) |
 | `AIRPORT_LIST_REFRESH_INTERVAL` | 7 days | How often the server re-fetches the airport list from OpenAIP |
+| `LOG_FILE` | `data/server.log` | Path to the append-only structured log file |
+| `LOG_MAX_ENTRIES` | 200 | Maximum log entries returned via the `/api/log` endpoint |
 
 ### API Key Resolution
 
@@ -157,10 +165,13 @@ For METAR proxy with `force=1`, the 2-hour history fetch timer is also reset via
 |------|----------|-----------|-------------|
 | Weather history fetch | 2 hours | `setTimeout` (recursive) | Fetches METAR+TAF for all tracked airports, stores in SQLite |
 | Airport list refresh | 7 days | `setInterval` | Re-fetches airport list from OpenAIP, updates `tracked_airports` table |
-| Data purge | 24 hours | `setInterval` | Deletes history records older than 3 years |
 | Cache save to disk | 5 minutes | `setInterval` | Writes in-memory cache to `.cache.json` |
+| Log file rotation | On startup | `rotateLogIfNeeded()` | Rotates `server.log` → `server.log.old` when file exceeds 5 MB |
+| Data purge | On startup only | `--purge` CLI flag | Deletes history records older than N days (default 1095, override with `--older-than <days>`) |
 
 The 2-hour history fetch uses `setTimeout` (not `setInterval`) so it can be reset when a manual refresh occurs. The chain is: `setTimeout` fires -> `performHistoryFetch()` -> `scheduleHistoryFetch()` (arms next timeout).
+
+Data purge is **not** run on a recurring schedule. It only runs at server startup when the `--purge` flag is explicitly provided. This prevents accidental data loss and gives the operator full control over retention.
 
 ### Startup Sequence
 
@@ -169,10 +180,11 @@ The 2-hour history fetch uses `setTimeout` (not `setInterval`) so it can be rese
 2. Initialize SQLite database (CREATE TABLE IF NOT EXISTS)
 3. Prepare INSERT statements
 4. Start HTTP server on PORT
-5. Bootstrap tracked_airports (fetch from OpenAIP if table is empty)
-6. Perform initial weather history fetch
-7. Schedule recurring 2-hour fetch
-8. Run initial data purge
+5. Rotate log file if > 5 MB
+6. Bootstrap tracked_airports (fetch from OpenAIP if table is empty)
+7. Perform initial weather history fetch
+8. Schedule recurring 2-hour fetch
+9. Purge old data (only if --purge flag provided, uses --older-than days or default 1095)
 ```
 
 ### Graceful Shutdown (SIGINT / SIGTERM)
@@ -182,6 +194,44 @@ The 2-hour history fetch uses `setTimeout` (not `setInterval`) so it can be rese
 2. Close SQLite database
 3. process.exit(0)
 ```
+
+### Structured Logging System
+
+All server events are written to `data/server.log` as an append-only TSV file. Each line has the format:
+
+```
+{ISO 8601 timestamp}\t{LEVEL}\t{CATEGORY}\t{message}\t{detail (optional)}
+```
+
+**Levels:** `INFO`, `WARN`, `ERROR`, `DEBUG`
+
+**Categories and what they log:**
+
+| Category | Events logged |
+|----------|---------------|
+| `SYSTEM` | Server start/stop, purge operations |
+| `SCHEDULER` | Timer scheduling, fetch triggers, fetch results (METAR/TAF counts), timer resets, airport list refresh triggers |
+| `HISTORY` | Weather storage operations, initial fetch, airport tracking, detailed batch results |
+| `METAR` | Proxy requests, cache hits/misses, upstream fetch results, history storage from proxy path |
+| `TAF` | Proxy requests, cache hits/misses, upstream fetch results, history storage from proxy path |
+| `AIRPORTS` | OpenAIP proxy requests, cache behavior, API key validation |
+| `CONFIG` | API key save/validation |
+| `CACHE` | Cache persistence (save/load to `.cache.json`), cache rotation |
+| `DB` | SQLite initialization, table creation, purge statistics |
+
+**SCHEDULER lifecycle per fetch cycle:**
+```
+SCHEDULER  Next weather fetch scheduled     120min from now (2026-02-15T18:00:00.000Z)
+SCHEDULER  Scheduled weather fetch triggered
+SCHEDULER  Fetch complete: 9 METARs, 8 TAFs stored
+SCHEDULER  Next weather fetch scheduled     120min from now (2026-02-15T20:00:00.000Z)
+```
+
+**Log file rotation:** When `server.log` exceeds 5 MB, it is renamed to `server.log.old` (overwriting any previous backup) and a fresh file is started. Rotation check runs once at startup.
+
+**API endpoint:** `GET /api/log?n=200&level=ERROR&category=SCHEDULER` — returns parsed entries as JSON. Used by `log.html`.
+
+**Console output:** All log entries are also written to stdout/stderr. `DEBUG` entries are only printed when `--verbose` is active.
 
 ---
 
@@ -485,7 +535,7 @@ Weather data is not cached client-side; the server-side proxy cache handles this
 ### `index.html` — Main Map Page
 
 The map page with Leaflet.js. Structure:
-- **Header**: Title, horizon selector buttons, legend, navigation links (History, Help, Stats)
+- **Header**: Title, horizon selector buttons, legend, navigation links (History, Help, Log, Stats)
 - **Map**: Full-viewport Leaflet map (`#map`)
 - **Floating horizon pill**: Mobile-only bottom bar with horizon buttons
 - **API key overlay**: Modal dialog for initial OpenAIP key entry
@@ -505,6 +555,17 @@ Self-contained page (all CSS + JS inline). Structure:
   - Bottom row: **TAF** (what the forecast predicted, using `flt_cat_now`)
   - Shared time axis with UTC labels and NOW marker
   - Click any segment to drill down via `/api/history/detail`
+
+### `log.html` — Server Log Viewer
+
+Self-contained page (all CSS + JS inline). Auto-refreshes every 5 seconds. Structure:
+- **Stats cards**: Total entries, error count, warning count, log file size
+- **Filters**: Level filter pills (All/Error/Warn/Info/Debug), category dropdown (SYSTEM/SCHEDULER/HISTORY/METAR/TAF/AIRPORTS/CONFIG/CACHE/DB)
+- **Log table**: Columns for Time (UTC), Level (color-coded badge), Category, Message, Detail
+  - Newest entries first
+  - Level badges: INFO (blue), WARN (orange), ERROR (red), DEBUG (gray)
+  - Detail column hidden on mobile
+  - Entry count indicator shows filtered vs total
 
 ### `stats.html` — API Proxy Stats Dashboard
 
@@ -526,7 +587,7 @@ Static documentation covering: map markers, trend arrows, airport popups, foreca
 ```dockerfile
 FROM node:22-alpine
 WORKDIR /app
-COPY server.js app.js index.html help.html stats.html history.html favicon.svg package.json ./
+COPY server.js app.js index.html help.html stats.html history.html log.html favicon.svg package.json ./
 ENV PORT=5556
 EXPOSE 5556
 CMD ["node", "server.js"]
@@ -546,14 +607,24 @@ services:
     restart: unless-stopped
 ```
 
-The `./data` volume mount is critical: it persists the SQLite database and API key configuration across container restarts.
+The `./data` volume mount is critical: it persists the SQLite database, API key configuration, and server log across container restarts.
 
 ### Local Development
 
 ```bash
-node server.js           # Start on port 5556
-node server.js --verbose # Start with detailed logging
+node server.js                          # Start on port 5556
+node server.js --verbose                # Start with debug-level logging
+node server.js --purge                  # Start and purge data older than 3 years
+node server.js --purge --older-than 30  # Start and purge data older than 30 days
 ```
+
+**CLI flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` / `-v` | Enable DEBUG-level log output to console |
+| `--purge` | Run data purge at startup (default: 1095 days retention) |
+| `--older-than <days>` | Override purge threshold (requires `--purge`) |
 
 No `npm install` needed. The only runtime requirement is Node.js >= 22.5.0 (for `node:sqlite`).
 

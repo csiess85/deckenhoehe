@@ -474,6 +474,7 @@ async function performHistoryFetch() {
   }
 
   logInfo('HISTORY', `Stored ${metarCount} METARs, ${tafCount} TAFs`, fetchTime.toISOString());
+  return { metarCount, tafCount };
 }
 
 function scheduleHistoryFetch() {
@@ -483,8 +484,14 @@ function scheduleHistoryFetch() {
   logInfo('SCHEDULER', `Next weather fetch scheduled`, `${HISTORY_FETCH_INTERVAL / 1000 / 60}min from now (${nextAt})`);
   historyFetchTimer = setTimeout(async () => {
     logInfo('SCHEDULER', 'Scheduled weather fetch triggered');
-    try { await performHistoryFetch(); }
-    catch (err) { logError('SCHEDULER', 'Scheduled fetch failed', err.message); }
+    try {
+      const result = await performHistoryFetch();
+      if (result) {
+        logInfo('SCHEDULER', `Fetch complete: ${result.metarCount} METARs, ${result.tafCount} TAFs stored`);
+      } else {
+        logWarn('SCHEDULER', 'Fetch returned no results (no airports tracked)');
+      }
+    } catch (err) { logError('SCHEDULER', 'Scheduled fetch failed', err.message); }
     scheduleHistoryFetch();
   }, HISTORY_FETCH_INTERVAL);
 }
@@ -1046,7 +1053,10 @@ server.listen(PORT, async () => {
     }
     logInfo('HISTORY', `Tracked airports: ${getTrackedIcaoCodes().length}`);
     logInfo('HISTORY', 'Performing initial weather fetch...');
-    await performHistoryFetch();
+    const result = await performHistoryFetch();
+    if (result) {
+      logInfo('SCHEDULER', `Initial fetch complete: ${result.metarCount} METARs, ${result.tafCount} TAFs stored`);
+    }
   } catch (err) {
     logError('HISTORY', 'Initial fetch failed', err.message);
   }
