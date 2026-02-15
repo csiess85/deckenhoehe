@@ -277,7 +277,7 @@ function getForecastGustAt(icao, targetTime) {
 
 // ─── Marker Icons ──────────────────────────────────────────
 
-function createAirportIcon(icao, isMajor, trend, gustWarn) {
+function createAirportIcon(icao, isMajor, trend, gustWarn, gustValue) {
   const color = getMarkerColor(icao);
   const size = isMajor ? 20 : 12;
   const border = isMajor ? 3 : 2;
@@ -293,13 +293,12 @@ function createAirportIcon(icao, isMajor, trend, gustWarn) {
   }
 
   let gustHtml = '';
-  if (gustWarn) {
-    gustHtml = `<div class="gust-indicator${isMajor ? ' gust-major' : ''}" title="Gusts ≥ ${GUST_WARNING_KT}kt">&#9888;</div>`;
+  if (gustWarn && gustValue) {
+    gustHtml = `<div class="gust-label${isMajor ? ' gust-label-major' : ''}" title="Gusts ≥ ${GUST_WARNING_KT}kt">G${gustValue}</div>`;
   }
 
   const dotWidth = size + border * 2;
   const arrowExtra = trend ? (isMajor ? 18 : 13) : 0;
-  const gustSize = gustWarn ? (isMajor ? 20 : 16) : 0;
 
   return L.divIcon({
     className: 'airport-marker',
@@ -309,8 +308,8 @@ function createAirportIcon(icao, isMajor, trend, gustWarn) {
       box-shadow: ${shadow};
       ${isMajor ? 'outline: 2px solid ' + color + '40;' : ''}
     "></div>${arrowHtml}${gustHtml}</div>`,
-    iconSize: [dotWidth + arrowExtra + gustSize, dotWidth + gustSize],
-    iconAnchor: [dotWidth / 2, (dotWidth + gustSize) / 2],
+    iconSize: [dotWidth + arrowExtra + 20, dotWidth + 10],
+    iconAnchor: [dotWidth / 2, dotWidth / 2],
   });
 }
 
@@ -700,7 +699,8 @@ function displayAirports() {
     const isMajor = MAJOR_AIRPORTS.has(icao);
     const trend = getTrendForAirport(icao);
     const gustWarn = hasGustWarning(icao);
-    const icon = createAirportIcon(icao, isMajor, trend, gustWarn);
+    const gustValue = gustWarn ? getMaxGust(icao) : 0;
+    const icon = createAirportIcon(icao, isMajor, trend, gustWarn, gustValue);
 
     const marker = L.marker([coords[1], coords[0]], {
       icon, zIndexOffset: isMajor ? 1000 : 0,
@@ -1123,35 +1123,28 @@ style.textContent = `
   .trend-deteriorating { color: #c0392b; }
 
   /* Gust Warning */
-  .gust-indicator {
+  .gust-label {
     position: absolute;
-    bottom: -10px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 16px;
-    height: 16px;
+    top: -8px;
+    right: -16px;
     background: #e67e22;
     color: white;
-    border: 2px solid white;
-    border-radius: 50%;
-    font-size: 10px;
-    line-height: 16px;
-    text-align: center;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    font-size: 8px;
+    font-weight: 800;
+    padding: 1px 3px;
+    border-radius: 3px;
+    border: 1.5px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    white-space: nowrap;
+    line-height: 1.2;
     pointer-events: none;
-    animation: gust-pulse 1.5s ease-in-out infinite;
     z-index: 10;
   }
-  .gust-indicator.gust-major {
-    bottom: -12px;
-    width: 19px;
-    height: 19px;
-    font-size: 12px;
-    line-height: 19px;
-  }
-  @keyframes gust-pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.85; transform: scale(1.15); }
+  .gust-label-major {
+    font-size: 9px;
+    padding: 1px 4px;
+    top: -10px;
+    right: -20px;
   }
   .gust-badge {
     background: #e67e22 !important;
