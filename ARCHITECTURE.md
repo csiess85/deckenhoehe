@@ -47,7 +47,7 @@ The application is a self-contained Node.js server with zero npm dependencies. I
 | `config.json` | Stores the OpenAIP API key on disk: `{"openaipApiKey": "..."}` |
 | `weather_history.db` | SQLite database for METAR/TAF history (~73 KB initial, grows ~170 MB/year) |
 | `server.log` | Append-only TSV log file (rotated at 5 MB). Format: `timestamp\tlevel\tcategory\tmessage\tdetail` |
-| `server.log.old` | Previous log file (created on rotation, overwritten each time) |
+| `server.YYYY-MM-DD_HH-MM-SS.log` | Rotated log files with timestamp (created when `server.log` exceeds 5 MB) |
 
 ### `.cache.json` (gitignored)
 
@@ -166,7 +166,7 @@ For METAR proxy with `force=1`, the 2-hour history fetch timer is also reset via
 | Weather history fetch | 2 hours | `setTimeout` (recursive) | Fetches METAR+TAF for all tracked airports, stores in SQLite |
 | Airport list refresh | 7 days | `setInterval` | Re-fetches airport list from OpenAIP, updates `tracked_airports` table |
 | Cache save to disk | 5 minutes | `setInterval` | Writes in-memory cache to `.cache.json` |
-| Log file rotation | On startup | `rotateLogIfNeeded()` | Rotates `server.log` → `server.log.old` when file exceeds 5 MB |
+| Log file rotation | On startup | `rotateLogIfNeeded()` | Rotates `server.log` → `server.{timestamp}.log` when file exceeds 5 MB |
 | Data purge | On startup only | `--purge` CLI flag | Deletes history records older than N days (default 1095, override with `--older-than <days>`) |
 
 The 2-hour history fetch uses `setTimeout` (not `setInterval`) so it can be reset when a manual refresh occurs. The chain is: `setTimeout` fires -> `performHistoryFetch()` -> `scheduleHistoryFetch()` (arms next timeout).
@@ -227,7 +227,7 @@ SCHEDULER  Fetch complete: 9 METARs, 8 TAFs stored
 SCHEDULER  Next weather fetch scheduled     120min from now (2026-02-15T20:00:00.000Z)
 ```
 
-**Log file rotation:** When `server.log` exceeds 5 MB, it is renamed to `server.log.old` (overwriting any previous backup) and a fresh file is started. Rotation check runs once at startup.
+**Log file rotation:** When `server.log` exceeds 5 MB, it is renamed to `server.YYYY-MM-DD_HH-MM-SS.log` (timestamped, preserving all rotated files) and a fresh `server.log` is started. Rotation check runs once at startup.
 
 **API endpoint:** `GET /api/log?n=200&level=ERROR&category=SCHEDULER` — returns parsed entries as JSON. Used by `log.html`.
 

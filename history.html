@@ -277,16 +277,20 @@
       margin: 0 auto;
     }
 
-    /* Detail panel */
+    /* Detail panel (inline, inserted after the clicked airport group) */
     .detail-panel {
-      background: white;
+      background: #fff;
+      border: 2px solid #1a1a2e;
       border-radius: 10px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
       padding: 16px;
-      margin-bottom: 20px;
-      display: none;
+      margin: 8px 0 14px;
+      display: block;
+      animation: detailSlideIn 0.2s ease-out;
     }
-    .detail-panel.visible { display: block; }
+    @keyframes detailSlideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     .detail-header {
       display: flex;
       justify-content: space-between;
@@ -407,14 +411,6 @@
         <div class="legend-item"><div class="legend-dot" style="background:#9b59b6"></div> LIFR</div>
         <div class="legend-item"><div class="legend-dot" style="background:#95a5a6"></div> N/A</div>
       </div>
-    </div>
-
-    <div class="detail-panel" id="detailPanel">
-      <div class="detail-header">
-        <h3 id="detailTitle">-</h3>
-        <button class="detail-close" id="detailClose">&times;</button>
-      </div>
-      <div class="detail-columns" id="detailContent"></div>
     </div>
 
     <div class="timeline-section">
@@ -561,6 +557,7 @@
     // ─── Timeline Rendering ────────────────────────────────
 
     function renderTimeline(data, fromDate, toDate) {
+      removeDetailPanel();
       const container = document.getElementById('timelineContainer');
       const totalMs = toDate.getTime() - fromDate.getTime();
       if (totalMs <= 0) {
@@ -671,13 +668,42 @@
 
     // ─── Detail Panel ──────────────────────────────────────
 
-    async function loadDetail(icao, time) {
-      const panel = document.getElementById('detailPanel');
-      const title = document.getElementById('detailTitle');
-      const content = document.getElementById('detailContent');
+    function removeDetailPanel() {
+      const existing = document.querySelector('.detail-panel');
+      if (existing) existing.remove();
+    }
 
-      title.textContent = `${icao} at ${fmtUtcShort(time)}`;
-      panel.classList.add('visible');
+    async function loadDetail(icao, time) {
+      // Remove any existing detail panel
+      removeDetailPanel();
+
+      // Find the airport group that was clicked
+      const seg = document.querySelector(`.timeline-segment[data-icao="${icao}"][data-time="${time}"]`);
+      const airportGroup = seg ? seg.closest('.airport-group') : null;
+      if (!airportGroup) return;
+
+      // Create the detail panel and insert it after the airport group
+      const panel = document.createElement('div');
+      panel.className = 'detail-panel';
+      panel.innerHTML = `
+        <div class="detail-header">
+          <h3>${icao} at ${fmtUtcShort(time)}</h3>
+          <button class="detail-close">&times;</button>
+        </div>
+        <div class="detail-columns">
+          <div style="color:#999;font-size:12px;padding:8px;">Loading...</div>
+        </div>
+      `;
+      airportGroup.after(panel);
+
+      // Close button handler
+      panel.querySelector('.detail-close').addEventListener('click', () => {
+        panel.remove();
+        document.querySelectorAll('.timeline-segment.selected').forEach(s => s.classList.remove('selected'));
+      });
+
+      // Scroll the panel into view
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       try {
         const data = await (await fetch(`/api/history/detail?icao=${encodeURIComponent(icao)}&time=${encodeURIComponent(time)}`)).json();
@@ -726,9 +752,9 @@
         }
         html += '</div>';
 
-        content.innerHTML = html;
+        panel.querySelector('.detail-columns').innerHTML = html;
       } catch (e) {
-        content.innerHTML = '<div style="color:#e74c3c;padding:12px;">Failed to load detail: ' + e.message + '</div>';
+        panel.querySelector('.detail-columns').innerHTML = '<div style="color:#e74c3c;padding:12px;">Failed to load detail: ' + e.message + '</div>';
       }
     }
 
@@ -764,10 +790,8 @@
       loadTimeline();
     });
 
-    document.getElementById('detailClose').addEventListener('click', () => {
-      document.getElementById('detailPanel').classList.remove('visible');
-      document.querySelectorAll('.timeline-segment.selected').forEach(s => s.classList.remove('selected'));
-    });
+    // Close inline detail panel when clicking outside (on timeline re-render)
+    // Note: close button handler is attached dynamically in loadDetail()
 
     // ─── Init ──────────────────────────────────────────────
 

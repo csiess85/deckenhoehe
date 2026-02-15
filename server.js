@@ -94,10 +94,10 @@ function rotateLogIfNeeded() {
     if (!fs.existsSync(LOG_FILE)) return;
     const stat = fs.statSync(LOG_FILE);
     if (stat.size > 5 * 1024 * 1024) { // > 5 MB
-      const rotated = LOG_FILE + '.old';
-      if (fs.existsSync(rotated)) fs.unlinkSync(rotated);
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+      const rotated = LOG_FILE.replace('.log', `.${ts}.log`);
       fs.renameSync(LOG_FILE, rotated);
-      appendLog('INFO', 'SYSTEM', 'Log file rotated (exceeded 5 MB)');
+      appendLog('INFO', 'SYSTEM', `Log file rotated (exceeded 5 MB)`, rotated);
     }
   } catch (e) { /* ignore */ }
 }
