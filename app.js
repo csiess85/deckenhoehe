@@ -713,6 +713,26 @@ function displayAirports() {
       autoPanPaddingTopLeft: L.point(10, 60),
     });
 
+    marker.on('popupopen', (e) => {
+      const wrapper = e.popup.getElement()?.querySelector('.leaflet-popup-content-wrapper');
+      const content = e.popup.getElement()?.querySelector('.leaflet-popup-content');
+      if (!wrapper || !content) return;
+
+      // Add fade indicator
+      const fade = document.createElement('div');
+      fade.className = 'popup-scroll-fade';
+      wrapper.appendChild(fade);
+
+      function updateFade() {
+        const atBottom = content.scrollTop + content.clientHeight >= content.scrollHeight - 8;
+        const hasOverflow = content.scrollHeight > content.clientHeight + 8;
+        fade.style.opacity = hasOverflow && !atBottom ? '1' : '0';
+      }
+      content.addEventListener('scroll', updateFade);
+      // Initial check after content renders
+      setTimeout(updateFade, 50);
+    });
+
     if (isMajor) {
       const cat = getDisplayCategory(icao);
       marker.bindTooltip(cat ? `${icao} (${cat})` : icao, {
@@ -773,7 +793,7 @@ function updateRefreshInfo() {
   const apiAge = Date.now() - lastApiFetch.getTime();
   const timestampText = formatTimestamp(lastApiFetch);
   const ageText = formatAge(apiAge);
-  const stale = apiAge > 10 * 60 * 1000; // > 10 min = stale styling
+  const stale = apiAge > 30 * 60 * 1000; // > 30 min = stale styling
 
   const fullText = `${horizonText} | <span class="wx-timestamp${stale ? ' wx-stale' : ''}">WX data: ${timestampText} (${ageText})</span>`;
   if (el) el.innerHTML = fullText;
@@ -1060,14 +1080,77 @@ async function init() {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit.click(); });
   input.addEventListener('input', () => { input.style.borderColor = '#ddd'; });
 
-  // Horizon selector
+  // Horizon selector — sync both header and floating pill
   document.addEventListener('click', (e) => {
     if (!e.target.classList.contains('horizon-btn')) return;
-    document.querySelectorAll('.horizon-btn').forEach(b => b.classList.remove('active'));
-    e.target.classList.add('active');
-    selectedHorizon = e.target.dataset.horizon;
+    const horizon = e.target.dataset.horizon;
+    document.querySelectorAll('.horizon-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.horizon === horizon);
+    });
+    selectedHorizon = horizon;
     displayAirports();
   });
+
+  // Mobile: auto-hide header on map drag
+  if (window.innerWidth <= 768) {
+    const header = document.querySelector('.header');
+    let lastCenter = null;
+    map.on('movestart', () => {
+      lastCenter = map.getCenter();
+    });
+    map.on('move', () => {
+      const center = map.getCenter();
+      if (lastCenter && center.lat < lastCenter.lat) {
+        header.classList.add('header-hidden');
+      } else if (lastCenter && center.lat > lastCenter.lat) {
+        header.classList.remove('header-hidden');
+      }
+      lastCenter = center;
+    });
+    // Tap on map area re-shows header
+    map.on('click', () => {
+      header.classList.remove('header-hidden');
+    });
+
+    // Swipe gesture on floating horizon pill
+    const horizonFloat = document.getElementById('horizonFloat');
+    const horizons = ['current', '2h', '4h', '8h', '24h'];
+    let touchStartX = null;
+    let touchStartY = null;
+
+    horizonFloat.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    horizonFloat.addEventListener('touchend', (e) => {
+      if (touchStartX === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      const dy = e.changedTouches[0].clientY - touchStartY;
+      touchStartX = null;
+      touchStartY = null;
+
+      // Only handle horizontal swipes (not taps or vertical gestures)
+      if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx)) return;
+
+      const currentIdx = horizons.indexOf(selectedHorizon);
+      let newIdx;
+      if (dx < 0) {
+        // Swipe left → next horizon
+        newIdx = Math.min(currentIdx + 1, horizons.length - 1);
+      } else {
+        // Swipe right → previous horizon
+        newIdx = Math.max(currentIdx - 1, 0);
+      }
+      if (newIdx !== currentIdx) {
+        selectedHorizon = horizons[newIdx];
+        document.querySelectorAll('.horizon-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.horizon === selectedHorizon);
+        });
+        displayAirports();
+      }
+    }, { passive: true });
+  }
 
   // Refresh weather button — forces a fresh fetch from AWC API (bypasses server cache)
   async function handleRefresh() {
@@ -1291,6 +1374,7 @@ style.textContent = `
     background: transparent;
     color: #666;
     transition: all 0.2s;
+    min-height: 36px;
   }
   .horizon-btn:hover {
     background: rgba(0,0,0,0.05);
@@ -1306,8 +1390,8 @@ style.textContent = `
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: #f0f0f0;
     color: #666;
@@ -1320,6 +1404,13 @@ style.textContent = `
   .help-btn:hover {
     background: #1a1a2e;
     color: white;
+  }
+  @media (max-width: 768px) {
+    .help-btn {
+      width: 40px;
+      height: 40px;
+      font-size: 16px;
+    }
   }
 
   /* Forecast Outlook in Popup */
@@ -1402,22 +1493,15 @@ style.textContent = `
 
   /* Responsive header */
   @media (max-width: 768px) {
-    .header {
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-    }
     .header h1 {
       font-size: 15px;
-      width: 100%;
-      text-align: center;
     }
-    .horizon-selector { order: 2; }
-    .legend { order: 3; font-size: 11px; gap: 8px; }
-    .horizon-btn { padding: 4px 8px; font-size: 11px; }
   }
 
-  /* Scrollable popup content */
+  /* Scrollable popup content with fade indicator */
+  .airport-popup-container .leaflet-popup-content-wrapper {
+    position: relative;
+  }
   .airport-popup-container .leaflet-popup-content {
     max-height: 60vh;
     overflow-y: auto;
@@ -1425,6 +1509,18 @@ style.textContent = `
   }
   .airport-popup-container .leaflet-popup-content .airport-popup {
     padding-right: 8px;
+  }
+  .popup-scroll-fade {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 32px;
+    background: linear-gradient(to bottom, transparent, rgba(255,255,255,0.95));
+    pointer-events: none;
+    border-radius: 0 0 12px 12px;
+    z-index: 10;
+    transition: opacity 0.2s;
   }
 
   /* Mobile popup sizing */

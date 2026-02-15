@@ -14,7 +14,7 @@
 
     .leaflet-top { top: 54px !important; }
     @media (max-width: 768px) {
-      .leaflet-top { top: 122px !important; }
+      .leaflet-top { top: 54px !important; }
     }
 
     .header {
@@ -40,6 +40,12 @@
 
     .header h1 span {
       color: #e63946;
+    }
+
+    .header-buttons {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .legend {
@@ -357,15 +363,52 @@
       display: none;
     }
 
+    /* Mobile floating horizon selector */
+    .horizon-float {
+      display: none;
+    }
+
     @media (max-width: 768px) {
       .stats-bar {
         display: none !important;
+      }
+      .header {
+        transition: transform 0.3s ease;
+      }
+      .header.header-hidden {
+        transform: translateY(-100%);
+      }
+      .header .horizon-selector {
+        display: none;
+      }
+      .header .legend {
+        display: none;
+      }
+      .horizon-float {
+        display: flex;
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1100;
+        background: rgba(255,255,255,0.95);
+        backdrop-filter: blur(8px);
+        border-radius: 20px;
+        padding: 4px;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+        gap: 2px;
+      }
+      .horizon-float .horizon-btn {
+        padding: 8px 14px;
+        font-size: 12px;
+        border-radius: 16px;
+        min-width: 44px;
+        min-height: 36px;
       }
       .header-refresh {
         display: flex !important;
         align-items: center;
         gap: 6px;
-        order: 4;
         font-size: 10px;
       }
       .header-refresh .refresh-info {
@@ -375,6 +418,8 @@
       .header-refresh .refresh-btn {
         padding: 2px 8px;
         font-size: 11px;
+        min-width: 36px;
+        min-height: 36px;
       }
       .attribution {
         display: none;
@@ -416,15 +461,25 @@
       <div class="legend-item"><div class="legend-dot lifr"></div> LIFR</div>
       <div class="legend-item"><div class="legend-dot nodata"></div> No WX</div>
     </div>
-    <a href="/help.html" class="help-btn" title="Help">?</a>
-    <a href="/stats.html" class="help-btn" title="API Stats">&#9881;</a>
-    <div class="header-refresh" id="headerRefresh" style="display:none;">
-      <span class="refresh-info" id="headerRefreshInfo"></span>
-      <button id="headerRefreshBtn" class="refresh-btn" title="Refresh weather data now">&#8635;</button>
+    <div class="header-buttons">
+      <div class="header-refresh" id="headerRefresh" style="display:none;">
+        <span class="refresh-info" id="headerRefreshInfo"></span>
+        <button id="headerRefreshBtn" class="refresh-btn" title="Refresh weather data now">&#8635;</button>
+      </div>
+      <a href="/help.html" class="help-btn" title="Help">?</a>
+      <a href="/stats.html" class="help-btn" title="API Stats">&#9881;</a>
     </div>
   </div>
 
   <div id="map"></div>
+
+  <div class="horizon-float" id="horizonFloat">
+    <button class="horizon-btn active" data-horizon="current">Now</button>
+    <button class="horizon-btn" data-horizon="2h">+2h</button>
+    <button class="horizon-btn" data-horizon="4h">+4h</button>
+    <button class="horizon-btn" data-horizon="8h">+8h</button>
+    <button class="horizon-btn" data-horizon="24h">+24h</button>
+  </div>
 
   <div id="apiKeyOverlay" class="api-key-overlay" style="display:none;">
     <div class="api-key-dialog">
