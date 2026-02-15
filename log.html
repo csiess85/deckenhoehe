@@ -159,14 +159,13 @@
       background: white;
       border-radius: 10px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-      overflow: hidden;
     }
     .log-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
     }
-    .log-table th {
+    .log-table thead th {
       text-align: left;
       padding: 10px 12px;
       background: #1a1a2e;
@@ -175,9 +174,6 @@
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.3px;
-      position: sticky;
-      top: 56px;
-      z-index: 10;
     }
     .log-table td {
       padding: 7px 12px;
@@ -242,7 +238,6 @@
       .filters { gap: 8px; }
       .log-table .col-detail { display: none; }
       .log-table .col-time { font-size: 10px; width: 120px; }
-      .log-table th { top: 50px; }
     }
   </style>
 </head>
@@ -277,6 +272,7 @@
         <select id="categoryFilter">
           <option value="all">All Categories</option>
           <option value="SYSTEM">SYSTEM</option>
+          <option value="SCHEDULER">SCHEDULER</option>
           <option value="HISTORY">HISTORY</option>
           <option value="METAR">METAR</option>
           <option value="TAF">TAF</option>

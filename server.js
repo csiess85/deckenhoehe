@@ -479,9 +479,12 @@ async function performHistoryFetch() {
 function scheduleHistoryFetch() {
   if (historyFetchTimer) clearTimeout(historyFetchTimer);
   nextHistoryFetchTime = Date.now() + HISTORY_FETCH_INTERVAL;
+  const nextAt = new Date(nextHistoryFetchTime).toISOString();
+  logInfo('SCHEDULER', `Next weather fetch scheduled`, `${HISTORY_FETCH_INTERVAL / 1000 / 60}min from now (${nextAt})`);
   historyFetchTimer = setTimeout(async () => {
+    logInfo('SCHEDULER', 'Scheduled weather fetch triggered');
     try { await performHistoryFetch(); }
-    catch (err) { logError('HISTORY', 'Scheduled fetch failed', err.message); }
+    catch (err) { logError('SCHEDULER', 'Scheduled fetch failed', err.message); }
     scheduleHistoryFetch();
   }, HISTORY_FETCH_INTERVAL);
 }
@@ -498,7 +501,10 @@ function purgeOldData(days) {
 }
 
 // Refresh airport list weekly
-setInterval(() => refreshAirportList().catch(e => logError('HISTORY', 'Airport refresh error', e.message)), AIRPORT_LIST_REFRESH_INTERVAL);
+setInterval(() => {
+  logInfo('SCHEDULER', 'Weekly airport list refresh triggered');
+  refreshAirportList().catch(e => logError('SCHEDULER', 'Airport list refresh failed', e.message));
+}, AIRPORT_LIST_REFRESH_INTERVAL);
 
 function getCached(key, ttl) {
   const entry = cache.get(key);
@@ -576,6 +582,7 @@ function proxyMetar(req, res, query) {
     cache.delete(cacheKey);
     logDebug('METAR', 'Cache invalidated (force refresh)');
     // Reset the 2h history fetch timer on manual refresh
+    logInfo('SCHEDULER', 'Timer reset by manual refresh');
     scheduleHistoryFetch();
   }
 
