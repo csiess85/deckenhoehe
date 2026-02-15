@@ -946,7 +946,7 @@ async function loadAirports() {
       return;
     }
 
-    airportsData = airports;
+    airportsData = airports.filter(a => a.type !== 4 && a.type !== 7);
 
     loadingText.textContent = `Fetching METAR & TAF for ${airports.length} airports...`;
     const icaoCodes = airports.filter(a => a.icaoCode).map(a => a.icaoCode);
