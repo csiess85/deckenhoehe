@@ -981,7 +981,7 @@
               min: chartFromDate?.getTime(),
               max: chartToDate?.getTime(),
               afterBuildTicks: xAfterBuildTicks,
-              ticks: { font: { size: 10 }, callback: xTickCallback },
+              ticks: { font: { size: 10 }, callback: xTickCallback, maxRotation: 45, autoSkip: true, maxTicksLimit: 12 },
             },
             y: {
               beginAtZero: true,
@@ -1064,7 +1064,7 @@
               min: chartFromDate?.getTime(),
               max: chartToDate?.getTime(),
               afterBuildTicks: xAfterBuildTicks,
-              ticks: { font: { size: 10 }, callback: xTickCallback },
+              ticks: { font: { size: 10 }, callback: xTickCallback, maxRotation: 45, autoSkip: true, maxTicksLimit: 12 },
             },
             y: {
               beginAtZero: true,
