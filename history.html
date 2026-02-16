@@ -447,9 +447,7 @@
       </div>
       <div class="legend">
         <div class="legend-item"><div class="legend-dot" style="background:#2ecc71"></div> VFR</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#3498db"></div> MVFR</div>
         <div class="legend-item"><div class="legend-dot" style="background:#e74c3c"></div> IFR</div>
-        <div class="legend-item"><div class="legend-dot" style="background:#9b59b6"></div> LIFR</div>
         <div class="legend-item"><div class="legend-dot" style="background:#95a5a6"></div> N/A</div>
       </div>
     </div>
@@ -467,7 +465,7 @@
 
   <script>
     const CAT_COLORS = {
-      VFR: '#2ecc71', MVFR: '#3498db', IFR: '#e74c3c', LIFR: '#9b59b6',
+      VFR: '#2ecc71', IFR: '#e74c3c',
     };
     const NO_DATA_COLOR = '#95a5a6';
 
@@ -511,13 +509,21 @@
       return `${dd}/${mm} ${fmtUtcHour(d)}`;
     }
 
+    // Normalize legacy MVFR/LIFR categories to IFR
+    function normalizeCat(cat) {
+      if (cat === 'MVFR' || cat === 'LIFR') return 'IFR';
+      return cat;
+    }
+
     function catColor(cat) {
-      return (cat && CAT_COLORS[cat]) ? CAT_COLORS[cat] : NO_DATA_COLOR;
+      const c = normalizeCat(cat);
+      return (c && CAT_COLORS[c]) ? CAT_COLORS[c] : NO_DATA_COLOR;
     }
 
     function catBadge(cat) {
-      const color = catColor(cat);
-      return `<span class="badge" style="background:${color}">${cat || 'N/A'}</span>`;
+      const c = normalizeCat(cat);
+      const color = catColor(c);
+      return `<span class="badge" style="background:${color}">${c || 'N/A'}</span>`;
     }
 
     // ─── Data Fetching ─────────────────────────────────────
@@ -777,7 +783,7 @@
           html += detailRow('Observed', m.report_time ? fmtUtcShort(m.report_time) : '-');
           if (m.visib != null) {
             const vis = parseFloat(m.visib);
-            html += detailRow('Visibility', `${m.visib} SM (${(vis * 1.60934).toFixed(1)} km)`);
+            html += detailRow('Visibility', `${(vis * 1.60934).toFixed(1)} km`);
           }
           if (m.ceiling != null) html += detailRow('Ceiling', m.ceiling + ' ft AGL');
           if (m.wdir != null && m.wspd != null) {
@@ -1038,29 +1044,11 @@
               pointRadius: 2,
               tension: 0.2,
             },
-            // Threshold reference lines (span full timeline range)
+            // IFR threshold reference line (1500 ft)
             {
-              label: 'LIFR 500ft',
-              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 500 }, { x: chartToDate, y: 500 }] : [],
-              borderColor: '#9b59b688',
-              borderDash: [3, 3],
-              borderWidth: 1,
-              pointRadius: 0,
-              fill: false,
-            },
-            {
-              label: 'IFR 1000ft',
-              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 1000 }, { x: chartToDate, y: 1000 }] : [],
+              label: 'IFR 1500ft',
+              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 1500 }, { x: chartToDate, y: 1500 }] : [],
               borderColor: '#e74c3c88',
-              borderDash: [3, 3],
-              borderWidth: 1,
-              pointRadius: 0,
-              fill: false,
-            },
-            {
-              label: 'MVFR 3000ft',
-              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 3000 }, { x: chartToDate, y: 3000 }] : [],
-              borderColor: '#3498db88',
               borderDash: [3, 3],
               borderWidth: 1,
               pointRadius: 0,

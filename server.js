@@ -287,6 +287,10 @@ function getLowestCloudBase(clouds) {
 }
 
 function computeFlightCategory(ceilingFt, visibSM) {
+  // ICAO/Austrian VFR: ceiling > 1500 ft AND visibility > 5 km (~3.107 SM)
+  const VFR_CEIL = 1500;
+  const VFR_VIS_SM = 5 / 1.60934; // 5 km in statute miles
+
   let vis = null;
   if (visibSM != null && visibSM !== '') {
     if (typeof visibSM === 'string') {
@@ -295,20 +299,10 @@ function computeFlightCategory(ceilingFt, visibSM) {
       vis = visibSM;
     }
   }
-  let ceilCat = 'VFR';
-  if (ceilingFt != null) {
-    if (ceilingFt < 500) ceilCat = 'LIFR';
-    else if (ceilingFt < 1000) ceilCat = 'IFR';
-    else if (ceilingFt <= 3000) ceilCat = 'MVFR';
-  }
-  let visCat = 'VFR';
-  if (vis != null) {
-    if (vis < 1) visCat = 'LIFR';
-    else if (vis < 3) visCat = 'IFR';
-    else if (vis <= 5) visCat = 'MVFR';
-  }
-  const severity = { LIFR: 3, IFR: 2, MVFR: 1, VFR: 0 };
-  return severity[ceilCat] >= severity[visCat] ? ceilCat : visCat;
+
+  if (ceilingFt != null && ceilingFt <= VFR_CEIL) return 'IFR';
+  if (vis != null && vis <= VFR_VIS_SM) return 'IFR';
+  return 'VFR';
 }
 
 function getTafPeriodCategory(period) {
@@ -321,7 +315,7 @@ function getTafPeriodCategory(period) {
 function worseCat(a, b) {
   if (!a) return b;
   if (!b) return a;
-  const s = { VFR: 0, MVFR: 1, IFR: 2, LIFR: 3 };
+  const s = { VFR: 0, IFR: 1 };
   return (s[a] || 0) >= (s[b] || 0) ? a : b;
 }
 
@@ -439,7 +433,7 @@ function storeMetarSnapshots(fetchTime, metarArray) {
       const ceiling = getCeilingFromClouds(m.clouds);
       const cloudBase = getLowestCloudBase(m.clouds);
       insertMetarStmt.run(
-        ft, m.icaoId, m.fltCat || null,
+        ft, m.icaoId, computeFlightCategory(ceiling, m.visib),
         m.temp ?? null, m.dewp ?? null,
         m.wdir ?? null, m.wspd ?? null, m.wgst ?? null,
         m.visib != null ? String(m.visib) : null,

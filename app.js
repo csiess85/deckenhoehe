@@ -30,9 +30,7 @@ const FREQ_TYPES = {
 // Flight category colors & labels
 const FLIGHT_CATEGORIES = {
   VFR:  { color: '#2ecc71', label: 'VFR',  desc: 'Visual Flight Rules' },
-  MVFR: { color: '#3498db', label: 'MVFR', desc: 'Marginal VFR' },
   IFR:  { color: '#e74c3c', label: 'IFR',  desc: 'Instrument Flight Rules' },
-  LIFR: { color: '#9b59b6', label: 'LIFR', desc: 'Low IFR' },
 };
 
 const NO_DATA_COLOR = '#95a5a6';
@@ -70,6 +68,10 @@ function initMap() {
 // Compute flight category from ceiling (ft AGL) and visibility (SM)
 // Using AWC criteria: https://aviationweather.gov/gfa/help/
 function computeFlightCategory(ceilingFt, visibSM) {
+  // ICAO/Austrian VFR: ceiling > 1500 ft AND visibility > 5 km (~3.107 SM)
+  const VFR_CEIL = 1500;
+  const VFR_VIS_SM = 5 / 1.60934; // 5 km in statute miles
+
   // Parse visibility — AWC uses "6+" to mean > 6 SM
   let vis = null;
   if (visibSM != null && visibSM !== '') {
@@ -81,27 +83,9 @@ function computeFlightCategory(ceilingFt, visibSM) {
     }
   }
 
-  // Determine category from ceiling
-  let ceilCat = 'VFR';
-  if (ceilingFt != null) {
-    if (ceilingFt < 500) ceilCat = 'LIFR';
-    else if (ceilingFt < 1000) ceilCat = 'IFR';
-    else if (ceilingFt <= 3000) ceilCat = 'MVFR';
-    else ceilCat = 'VFR';
-  }
-
-  // Determine category from visibility
-  let visCat = 'VFR';
-  if (vis != null) {
-    if (vis < 1) visCat = 'LIFR';
-    else if (vis < 3) visCat = 'IFR';
-    else if (vis <= 5) visCat = 'MVFR';
-    else visCat = 'VFR';
-  }
-
-  // Return the worse of the two
-  const severity = { LIFR: 3, IFR: 2, MVFR: 1, VFR: 0 };
-  return severity[ceilCat] >= severity[visCat] ? ceilCat : visCat;
+  if (ceilingFt != null && ceilingFt <= VFR_CEIL) return 'IFR';
+  if (vis != null && vis <= VFR_VIS_SM) return 'IFR';
+  return 'VFR';
 }
 
 function getCeilingFromClouds(clouds) {
@@ -115,8 +99,9 @@ function getCeilingFromClouds(clouds) {
 }
 
 function getFlightCategory(metar) {
-  if (metar && metar.fltCat) return metar.fltCat;
-  return null;
+  if (!metar) return null;
+  const ceiling = getCeilingFromClouds(metar.clouds);
+  return computeFlightCategory(ceiling, metar.visib);
 }
 
 function getMarkerColor(icao) {
@@ -147,7 +132,7 @@ function getTafPeriodCategory(period) {
 
 // ─── Forecast Category at Future Time ───────────────────────
 
-const CATEGORY_SEVERITY = { VFR: 0, MVFR: 1, IFR: 2, LIFR: 3 };
+const CATEGORY_SEVERITY = { VFR: 0, IFR: 1 };
 
 function worseCat(a, b) {
   if (!a) return b;
@@ -432,12 +417,9 @@ function buildTafTimeline(taf) {
     const details = [];
 
     if (period.visib != null && period.visib !== '') {
-      const visSM = period.visib;
-      if (typeof visSM === 'number') {
-        details.push(`Vis: ${visSM.toFixed(1)} SM`);
-      } else {
-        details.push(`Vis: ${visSM} SM`);
-      }
+      const visNum = typeof period.visib === 'number' ? period.visib : parseFloat(period.visib);
+      const visKm = (visNum * 1.60934).toFixed(1);
+      details.push(`Vis: ${visKm} km`);
     }
 
     const ceiling = getCeilingFromClouds(period.clouds);
@@ -576,7 +558,7 @@ function buildPopupContent(airport) {
       const visSM = metar.visib;
       const visNum = typeof visSM === 'string' ? parseFloat(visSM) : visSM;
       const visKm = (visNum * 1.60934).toFixed(1);
-      html += `<div class="detail-row"><span class="detail-label">Visibility</span><span class="detail-value">${visSM} SM (${visKm} km)</span></div>`;
+      html += `<div class="detail-row"><span class="detail-label">Visibility</span><span class="detail-value">${visKm} km</span></div>`;
     }
 
     const ceiling = getCeilingFromClouds(metar.clouds);
@@ -685,7 +667,7 @@ function displayAirports() {
   airportMarkers.forEach(m => map.removeLayer(m));
   airportMarkers = [];
 
-  let stats = { total: 0, VFR: 0, MVFR: 0, IFR: 0, LIFR: 0, nodata: 0 };
+  let stats = { total: 0, VFR: 0, IFR: 0, nodata: 0 };
 
   const sorted = [...airportsData].sort((a, b) => {
     return (MAJOR_AIRPORTS.has(a.icaoCode) ? 1 : 0) - (MAJOR_AIRPORTS.has(b.icaoCode) ? 1 : 0);
@@ -751,9 +733,7 @@ function displayAirports() {
 
   document.getElementById('statTotal').textContent = stats.total;
   document.getElementById('statVfr').textContent = stats.VFR;
-  document.getElementById('statMvfr').textContent = stats.MVFR;
   document.getElementById('statIfr').textContent = stats.IFR;
-  document.getElementById('statLifr').textContent = stats.LIFR;
   document.getElementById('statNodata').textContent = stats.nodata;
   document.getElementById('statsBar').style.display = 'flex';
 

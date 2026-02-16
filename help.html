@@ -128,9 +128,7 @@
     }
 
     .cat-dot.vfr { background: #2ecc71; }
-    .cat-dot.mvfr { background: #3498db; }
     .cat-dot.ifr { background: #e74c3c; }
-    .cat-dot.lifr { background: #9b59b6; }
     .cat-dot.nodata { background: #95a5a6; }
 
     .note {
@@ -181,9 +179,7 @@
     <table>
       <tr><th>Color</th><th>Category</th><th>Meaning</th></tr>
       <tr><td><span class="cat-dot vfr"></span> Green</td><td>VFR</td><td>Visual Flight Rules — good conditions</td></tr>
-      <tr><td><span class="cat-dot mvfr"></span> Blue</td><td>MVFR</td><td>Marginal VFR — reduced visibility or low ceiling</td></tr>
       <tr><td><span class="cat-dot ifr"></span> Red</td><td>IFR</td><td>Instrument Flight Rules — poor conditions</td></tr>
-      <tr><td><span class="cat-dot lifr"></span> Purple</td><td>LIFR</td><td>Low IFR — very poor conditions</td></tr>
       <tr><td><span class="cat-dot nodata"></span> Gray</td><td>No WX</td><td>No weather data available for this station</td></tr>
     </table>
     <p>The six major airports (LOWW, LOWS, LOWG, LOWI, LOWK, LOWL) are shown as larger dots with permanent labels.</p>
@@ -191,8 +187,8 @@
     <h3>Trend Arrows</h3>
     <p>Some markers display a small arrow next to the dot, indicating how conditions are expected to change at the next forecast horizon:</p>
     <ul>
-      <li><strong style="color:#27ae60;">&#9650; Green arrow (up)</strong> — conditions are expected to <strong>improve</strong> (e.g. IFR → MVFR)</li>
-      <li><strong style="color:#c0392b;">&#9660; Red arrow (down)</strong> — conditions are expected to <strong>deteriorate</strong> (e.g. VFR → MVFR)</li>
+      <li><strong style="color:#27ae60;">&#9650; Green arrow (up)</strong> — conditions are expected to <strong>improve</strong> (e.g. IFR → VFR)</li>
+      <li><strong style="color:#c0392b;">&#9660; Red arrow (down)</strong> — conditions are expected to <strong>deteriorate</strong> (e.g. VFR → IFR)</li>
       <li><strong>No arrow</strong> — conditions are expected to remain <strong>stable</strong>, or no forecast data is available</li>
     </ul>
     <p>The trend compares the currently displayed horizon to the next step in the chain: Now → +2h → +4h → +8h → +24h. For example, when viewing "+2h", the arrow shows whether conditions at +4h will be better or worse. No arrows are shown at the +24h horizon since there is no further step to compare against.</p>
@@ -219,13 +215,11 @@
     <p>If an airport's TAF does not cover the selected time (e.g. +24h on a short TAF), the map falls back to the current METAR category.</p>
 
     <h2>Flight Category Criteria</h2>
-    <p>Based on <a href="https://aviationweather.gov/gfa/help/" target="_blank">AWC standards</a>. The worse of ceiling and visibility determines the category:</p>
+    <p>Based on ICAO/Austrian VFR standards. The worse of ceiling and visibility determines the category:</p>
     <table>
       <tr><th>Category</th><th>Ceiling</th><th>Visibility</th></tr>
-      <tr><td><span class="cat-dot vfr"></span> VFR</td><td>&gt; 3,000 ft AGL</td><td>&gt; 5 SM</td></tr>
-      <tr><td><span class="cat-dot mvfr"></span> MVFR</td><td>1,000 &ndash; 3,000 ft</td><td>3 &ndash; 5 SM</td></tr>
-      <tr><td><span class="cat-dot ifr"></span> IFR</td><td>500 &ndash; 999 ft</td><td>1 &ndash; 2.99 SM</td></tr>
-      <tr><td><span class="cat-dot lifr"></span> LIFR</td><td>&lt; 500 ft</td><td>&lt; 1 SM</td></tr>
+      <tr><td><span class="cat-dot vfr"></span> VFR</td><td>&gt; 1,500 ft AGL</td><td>&gt; 5 km</td></tr>
+      <tr><td><span class="cat-dot ifr"></span> IFR</td><td>&le; 1,500 ft AGL</td><td>&le; 5 km</td></tr>
     </table>
 
     <h3>Cloud Cover and Ceiling</h3>
