@@ -898,27 +898,15 @@
       const metarPts = (weatherData?.metar?.[icao]) || [];
       const tafPts = (weatherData?.taf?.[icao]) || [];
 
-      // Shared UTC x-axis config (date-fns adapter uses local time, so we override everything)
+      // Build tick positions from actual METAR observation times (UTC)
       const totalHrs = (chartToDate - chartFromDate) / 3600000;
-      let stepHrs;
-      if (totalHrs <= 24) stepHrs = 3;
-      else if (totalHrs <= 72) stepHrs = 6;
-      else if (totalHrs <= 168) stepHrs = 12;
-      else stepHrs = 24;
-      // Build UTC tick positions — same logic as renderTimeAxis
-      const utcTicks = [];
-      const startH = Math.ceil(chartFromDate.getUTCHours() / stepHrs) * stepHrs;
-      const firstTick = new Date(chartFromDate);
-      firstTick.setUTCHours(startH, 0, 0, 0);
-      if (firstTick < chartFromDate) firstTick.setUTCHours(firstTick.getUTCHours() + stepHrs);
-      for (let t = firstTick.getTime(); t <= chartToDate.getTime(); t += stepHrs * 3600000) {
-        utcTicks.push({ value: t });
-      }
+      const metarTimes = metarPts.map(p => new Date(p.t).getTime());
+      const utcTicks = metarTimes.map(t => ({ value: t }));
       const xAfterBuildTicks = (axis) => { axis.ticks = utcTicks; };
       const xTickCallback = (val) => {
         const d = new Date(val);
         if (totalHrs > 48) return fmtDate(d);
-        return fmtUtcHour(d);
+        return fmtUtcShort(d.toISOString());
       };
       const tooltipTitle = (items) => {
         if (!items.length) return '';
