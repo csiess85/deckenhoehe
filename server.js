@@ -513,7 +513,7 @@ async function performHistoryFetch() {
   for (let i = 0; i < icaoCodes.length; i += batchSize) {
     const batch = icaoCodes.slice(i, i + batchSize).join(',');
     try {
-      const metarUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(batch)}&format=json`;
+      const metarUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(batch)}&format=json&hours=3`;
       const metarData = await httpsGetJson(metarUrl);
       if (Array.isArray(metarData)) allMetar.push(...metarData);
     } catch (err) {
