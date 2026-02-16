@@ -179,6 +179,8 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_taf_icao_time ON taf_history (icao_id, fetch_time);
   CREATE INDEX IF NOT EXISTS idx_taf_time ON taf_history (fetch_time);
+  CREATE INDEX IF NOT EXISTS idx_metar_report ON metar_history (icao_id, report_time);
+  CREATE INDEX IF NOT EXISTS idx_taf_valid ON taf_history (icao_id, valid_from);
 
   CREATE TABLE IF NOT EXISTS tracked_airports (
     icao_id    TEXT PRIMARY KEY,
@@ -189,14 +191,30 @@ db.exec(`
   );
 `);
 
+// Purge duplicate rows (keep earliest fetch per unique observation)
+db.exec(`
+  DELETE FROM metar_history WHERE id NOT IN (
+    SELECT MIN(id) FROM metar_history WHERE report_time IS NOT NULL GROUP BY icao_id, report_time
+  ) AND report_time IS NOT NULL;
+  DELETE FROM taf_history WHERE id NOT IN (
+    SELECT MIN(id) FROM taf_history WHERE valid_from IS NOT NULL GROUP BY icao_id, valid_from
+  ) AND valid_from IS NOT NULL;
+`);
+
 const insertMetarStmt = db.prepare(`
   INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, wx_string, raw_ob, report_time, metar_json)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const metarExistsStmt = db.prepare(`
+  SELECT 1 FROM metar_history WHERE icao_id = ? AND report_time = ? LIMIT 1
 `);
 
 const insertTafStmt = db.prepare(`
   INSERT INTO taf_history (fetch_time, icao_id, valid_from, valid_to, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h, raw_taf, taf_json)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const tafExistsStmt = db.prepare(`
+  SELECT 1 FROM taf_history WHERE icao_id = ? AND valid_from = ? LIMIT 1
 `);
 
 logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
@@ -361,6 +379,8 @@ function storeMetarSnapshots(fetchTime, metarArray) {
   try {
     for (const m of metarArray) {
       if (!m.icaoId) continue;
+      // Skip if we already have this exact observation
+      if (m.reportTime && metarExistsStmt.get(m.icaoId, m.reportTime)) continue;
       const ceiling = getCeilingFromClouds(m.clouds);
       insertMetarStmt.run(
         ft, m.icaoId, m.fltCat || null,
@@ -392,12 +412,14 @@ function storeTafSnapshots(fetchTime, tafArray) {
   try {
     for (const t of tafArray) {
       if (!t.icaoId) continue;
+      // Skip if we already have this exact forecast
+      const validFrom = t.validTimeFrom ? new Date(t.validTimeFrom * 1000).toISOString() : null;
+      if (validFrom && tafExistsStmt.get(t.icaoId, validFrom)) continue;
       const catNow = getForecastCategoryFromTaf(t, nowSec);
       const cat2h = getForecastCategoryFromTaf(t, nowSec + 2 * 3600);
       const cat4h = getForecastCategoryFromTaf(t, nowSec + 4 * 3600);
       const cat8h = getForecastCategoryFromTaf(t, nowSec + 8 * 3600);
       const cat24h = getForecastCategoryFromTaf(t, nowSec + 24 * 3600);
-      const validFrom = t.validTimeFrom ? new Date(t.validTimeFrom * 1000).toISOString() : null;
       const validTo = t.validTimeTo ? new Date(t.validTimeTo * 1000).toISOString() : null;
       insertTafStmt.run(
         ft, t.icaoId, validFrom, validTo,
@@ -889,7 +911,7 @@ function handleHistoryTimeline(req, res, query) {
     icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
   }
 
-  // METAR timeline — use report_time, deduplicate by (icao, report_time)
+  // METAR timeline — use report_time (observation time)
   const metarResult = {};
   let metarRows;
   if (icaoFilter) {
@@ -897,14 +919,12 @@ function handleHistoryTimeline(req, res, query) {
     metarRows = db.prepare(`
       SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, flt_cat FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, COALESCE(report_time, fetch_time)
       ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
     metarRows = db.prepare(`
       SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, flt_cat FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, COALESCE(report_time, fetch_time)
       ORDER BY icao_id, obs_time
     `).all(from, to);
   }
@@ -913,7 +933,7 @@ function handleHistoryTimeline(req, res, query) {
     metarResult[row.icao_id].push({ t: row.obs_time, cat: row.flt_cat });
   }
 
-  // TAF timeline — deduplicate by (icao, valid_from)
+  // TAF timeline
   const tafResult = {};
   let tafRows;
   if (icaoFilter) {
@@ -921,14 +941,12 @@ function handleHistoryTimeline(req, res, query) {
     tafRows = db.prepare(`
       SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(...icaoFilter, from, to);
   } else {
     tafRows = db.prepare(`
       SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(from, to);
   }
@@ -992,7 +1010,7 @@ function handleHistoryWeather(req, res, query) {
     icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
   }
 
-  // METAR weather data — use report_time (observation time), deduplicate by (icao, report_time)
+  // METAR weather data — use report_time (observation time)
   const metarResult = {};
   let metarRows;
   if (icaoFilter) {
@@ -1001,7 +1019,6 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
       FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, COALESCE(report_time, fetch_time)
       ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
@@ -1009,7 +1026,6 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
       FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, COALESCE(report_time, fetch_time)
       ORDER BY icao_id, obs_time
     `).all(from, to);
   }
@@ -1020,7 +1036,7 @@ function handleHistoryWeather(req, res, query) {
     });
   }
 
-  // TAF weather data — deduplicate by (icao, valid_from), use fetch_time for period evaluation
+  // TAF weather data — use fetch_time for period evaluation
   const tafResult = {};
   let tafRows;
   if (icaoFilter) {
@@ -1029,7 +1045,6 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, fetch_time, taf_json
       FROM taf_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(...icaoFilter, from, to);
   } else {
@@ -1037,7 +1052,6 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, fetch_time, taf_json
       FROM taf_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(from, to);
   }
