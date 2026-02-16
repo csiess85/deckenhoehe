@@ -601,6 +601,8 @@
       removeDetailPanel();
       destroyAllCharts();
       weatherData = null;
+      chartFromDate = fromDate;
+      chartToDate = toDate;
       const container = document.getElementById('timelineContainer');
       const totalMs = toDate.getTime() - fromDate.getTime();
       if (totalMs <= 0) {
@@ -822,6 +824,7 @@
     // ─── Wind & Ceiling Charts ──────────────────────────────
 
     let weatherData = null;
+    let chartFromDate = null, chartToDate = null; // set during renderTimeline for chart x-axis alignment
     const chartInstances = new Map(); // icao -> { wind: Chart, ceiling: Chart }
 
     function destroyAllCharts() {
@@ -950,6 +953,7 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: { padding: { right: 0 } },
           plugins: {
             legend: { position: 'top', labels: { boxWidth: 16, font: { size: 10 } } },
             title: { display: true, text: `${icao} — Wind`, font: { size: 12, weight: '600' }, color: '#1a1a2e' },
@@ -957,10 +961,17 @@
           scales: {
             x: {
               type: 'time',
+              min: chartFromDate?.getTime(),
+              max: chartToDate?.getTime(),
               time: { tooltipFormat: 'dd.MM HH:mm', displayFormats: { hour: 'HH\'Z\'', day: 'dd.MM' } },
               ticks: { font: { size: 10 } },
             },
-            y: { beginAtZero: true, title: { display: true, text: 'kt', font: { size: 10 } }, ticks: { font: { size: 10 } } },
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'kt', font: { size: 10 } },
+              ticks: { font: { size: 10 } },
+              afterFit(axis) { axis.width = 48; }, // align plot area with timeline-bar
+            },
           },
         },
       });
@@ -991,10 +1002,10 @@
               pointRadius: 2,
               tension: 0.2,
             },
-            // Threshold reference lines
+            // Threshold reference lines (span full timeline range)
             {
               label: 'LIFR 500ft',
-              data: metarPts.length > 0 ? [{ x: new Date(metarPts[0].t), y: 500 }, { x: new Date(metarPts[metarPts.length - 1].t), y: 500 }] : [],
+              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 500 }, { x: chartToDate, y: 500 }] : [],
               borderColor: '#9b59b688',
               borderDash: [3, 3],
               borderWidth: 1,
@@ -1003,7 +1014,7 @@
             },
             {
               label: 'IFR 1000ft',
-              data: metarPts.length > 0 ? [{ x: new Date(metarPts[0].t), y: 1000 }, { x: new Date(metarPts[metarPts.length - 1].t), y: 1000 }] : [],
+              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 1000 }, { x: chartToDate, y: 1000 }] : [],
               borderColor: '#e74c3c88',
               borderDash: [3, 3],
               borderWidth: 1,
@@ -1012,7 +1023,7 @@
             },
             {
               label: 'MVFR 3000ft',
-              data: metarPts.length > 0 ? [{ x: new Date(metarPts[0].t), y: 3000 }, { x: new Date(metarPts[metarPts.length - 1].t), y: 3000 }] : [],
+              data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: 3000 }, { x: chartToDate, y: 3000 }] : [],
               borderColor: '#3498db88',
               borderDash: [3, 3],
               borderWidth: 1,
@@ -1024,6 +1035,7 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: { padding: { right: 0 } },
           plugins: {
             legend: { position: 'top', labels: { boxWidth: 16, font: { size: 10 } } },
             title: { display: true, text: `${icao} — Ceiling`, font: { size: 12, weight: '600' }, color: '#1a1a2e' },
@@ -1031,10 +1043,17 @@
           scales: {
             x: {
               type: 'time',
+              min: chartFromDate?.getTime(),
+              max: chartToDate?.getTime(),
               time: { tooltipFormat: 'dd.MM HH:mm', displayFormats: { hour: 'HH\'Z\'', day: 'dd.MM' } },
               ticks: { font: { size: 10 } },
             },
-            y: { beginAtZero: true, title: { display: true, text: 'ft AGL', font: { size: 10 } }, ticks: { font: { size: 10 } } },
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'ft AGL', font: { size: 10 } },
+              ticks: { font: { size: 10 } },
+              afterFit(axis) { axis.width = 48; }, // align plot area with timeline-bar
+            },
           },
         },
       });
