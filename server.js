@@ -1059,7 +1059,8 @@ function handleHistoryWeather(req, res, query) {
     });
   }
 
-  // TAF weather data — use fetch_time for period evaluation
+  // TAF weather data — expand each TAF into hourly samples across its validity.
+  // Each TAF is authoritative from its fetch_time until the next TAF's fetch_time.
   const tafResult = {};
   let tafRows;
   if (icaoFilter) {
@@ -1078,21 +1079,38 @@ function handleHistoryWeather(req, res, query) {
       ORDER BY icao_id, fetch_time
     `).all(from, to);
   }
+  // Group TAF rows by ICAO
+  const tafByIcao = {};
   for (const row of tafRows) {
     if (!row.taf_json) continue;
-    try {
-      const taf = JSON.parse(row.taf_json);
-      const fetchTimeSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
-      // Evaluate at fetchTime, or validTimeFrom if fetched before validity starts
-      const evalTime = Math.max(fetchTimeSec, taf.validTimeFrom || 0);
-      const weather = getForecastWeatherFromTaf(taf, evalTime);
-      if (!tafResult[row.icao_id]) tafResult[row.icao_id] = [];
-      tafResult[row.icao_id].push({
-        t: row.fetch_time,
-        wspd: weather?.wspd ?? null, wgst: weather?.wgst ?? null,
-        wdir: weather?.wdir ?? null, ceil: weather?.ceiling ?? null
-      });
-    } catch (e) { /* skip unparseable TAF JSON */ }
+    if (!tafByIcao[row.icao_id]) tafByIcao[row.icao_id] = [];
+    tafByIcao[row.icao_id].push(row);
+  }
+  const fromSec = Math.floor(new Date(from).getTime() / 1000);
+  const toSec = Math.floor(new Date(to).getTime() / 1000);
+  for (const [icao, rows] of Object.entries(tafByIcao)) {
+    tafResult[icao] = [];
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        const taf = JSON.parse(rows[i].taf_json);
+        if (!taf.validTimeFrom || !taf.validTimeTo) continue;
+        const fetchSec = Math.floor(new Date(rows[i].fetch_time).getTime() / 1000);
+        // This TAF is authoritative from fetch_time until the next TAF's fetch_time
+        const nextFetchSec = i < rows.length - 1
+          ? Math.floor(new Date(rows[i + 1].fetch_time).getTime() / 1000)
+          : toSec;
+        const sampleFrom = Math.max(taf.validTimeFrom, fetchSec, fromSec);
+        const sampleTo = Math.min(taf.validTimeTo, nextFetchSec, toSec);
+        for (let t = sampleFrom; t <= sampleTo; t += 3600) {
+          const weather = getForecastWeatherFromTaf(taf, t);
+          tafResult[icao].push({
+            t: new Date(t * 1000).toISOString(),
+            wspd: weather?.wspd ?? null, wgst: weather?.wgst ?? null,
+            wdir: weather?.wdir ?? null, ceil: weather?.ceiling ?? null
+          });
+        }
+      } catch (e) { /* skip unparseable TAF JSON */ }
+    }
   }
 
   res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
