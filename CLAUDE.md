@@ -20,7 +20,7 @@ Austrian airport VFR weather map app showing real-time flight conditions (VFR/MV
 - Server proxies METAR/TAF requests to aviationweather.gov (CORS bypass)
 - Server proxies OpenAIP airport requests (API key stored server-side in `data/config.json`)
 - `OPENAIP_API_KEY` env var takes precedence over config file (for Docker)
-- Server-side in-memory cache (5 min TTL) for weather and airport proxy responses
+- Server-side in-memory cache (1h TTL for weather, 7d for airports) with stable keys (`metar:all`, `taf:all`)
 - Client-side localStorage cache (24h TTL) for airport data
 - `force=1` query param on proxy endpoints bypasses server cache
 - `X-Cache` and `X-Fetch-Time` response headers track cache status

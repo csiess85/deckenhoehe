@@ -810,26 +810,21 @@ function updateRefreshInfo() {
 async function fetchMetar(icaoCodes, force = false) {
   if (icaoCodes.length === 0) return { data: {}, fetchTime: null };
   const results = {};
-  let latestFetchTime = null;
-  const batchSize = 40;
+  let fetchTime = null;
 
-  for (let i = 0; i < icaoCodes.length; i += batchSize) {
-    const ids = icaoCodes.slice(i, i + batchSize).join(',');
-    try {
-      const url = `${METAR_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const ft = res.headers.get('X-Fetch-Time');
-        if (ft) {
-          const t = new Date(ft);
-          if (!latestFetchTime || t > latestFetchTime) latestFetchTime = t;
-        }
-        const data = await res.json();
-        if (Array.isArray(data)) data.forEach(m => { if (m.icaoId) results[m.icaoId] = m; });
-      }
-    } catch (err) { console.warn('METAR fetch failed:', err); }
-  }
-  return { data: results, fetchTime: latestFetchTime };
+  try {
+    const ids = icaoCodes.join(',');
+    const url = `${METAR_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const ft = res.headers.get('X-Fetch-Time');
+      if (ft) fetchTime = new Date(ft);
+      const data = await res.json();
+      if (Array.isArray(data)) data.forEach(m => { if (m.icaoId) results[m.icaoId] = m; });
+    }
+  } catch (err) { console.warn('METAR fetch failed:', err); }
+
+  return { data: results, fetchTime };
 }
 
 // ─── Fetch TAF Data ────────────────────────────────────────
@@ -837,26 +832,21 @@ async function fetchMetar(icaoCodes, force = false) {
 async function fetchTaf(icaoCodes, force = false) {
   if (icaoCodes.length === 0) return { data: {}, fetchTime: null };
   const results = {};
-  let latestFetchTime = null;
-  const batchSize = 40;
+  let fetchTime = null;
 
-  for (let i = 0; i < icaoCodes.length; i += batchSize) {
-    const ids = icaoCodes.slice(i, i + batchSize).join(',');
-    try {
-      const url = `${TAF_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const ft = res.headers.get('X-Fetch-Time');
-        if (ft) {
-          const t = new Date(ft);
-          if (!latestFetchTime || t > latestFetchTime) latestFetchTime = t;
-        }
-        const data = await res.json();
-        if (Array.isArray(data)) data.forEach(t => { if (t.icaoId) results[t.icaoId] = t; });
-      }
-    } catch (err) { console.warn('TAF fetch failed:', err); }
-  }
-  return { data: results, fetchTime: latestFetchTime };
+  try {
+    const ids = icaoCodes.join(',');
+    const url = `${TAF_PROXY}?ids=${encodeURIComponent(ids)}${force ? '&force=1' : ''}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const ft = res.headers.get('X-Fetch-Time');
+      if (ft) fetchTime = new Date(ft);
+      const data = await res.json();
+      if (Array.isArray(data)) data.forEach(t => { if (t.icaoId) results[t.icaoId] = t; });
+    }
+  } catch (err) { console.warn('TAF fetch failed:', err); }
+
+  return { data: results, fetchTime };
 }
 
 // ─── Fetch Airports from OpenAIP ───────────────────────────

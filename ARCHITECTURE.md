@@ -116,7 +116,7 @@ getApiKey():
 Map<string, { statusCode: number, body: string, time: number }>
 ```
 
-- Keys: `metar:{ids}`, `taf:{ids}`, `airports:{country}:{page}:{limit}`
+- Keys: `metar:all`, `taf:all`, `airports:{country}:{page}:{limit}`
 - TTL checked on read via `getCached(key, ttl)`
 - Saved to `.cache.json` every 5 minutes + on shutdown
 - Loaded from disk on startup
@@ -150,13 +150,19 @@ Map<string, { statusCode: number, body: string, time: number }>
 ### Proxy Flow
 
 ```
-Client request → Check force=1? → Delete cache entry
-                → Check cache    → HIT: return cached response with X-Cache: HIT
-                → MISS:          → Fetch from upstream API
-                                 → Cache the response
-                                 → Store in SQLite history (METAR/TAF only)
-                                 → Return with X-Cache: MISS
+Client request (all ICAOs in one request)
+  → Check force=1? → Delete cache entry
+  → Check cache (key: metar:all / taf:all)
+      → HIT: return cached response with X-Cache: HIT
+      → MISS: Batch ICAOs into groups of 40
+              → Fetch each batch from upstream API
+              → Aggregate all results into single array
+              → Cache the combined response
+              → Store in SQLite history (METAR/TAF only)
+              → Return with X-Cache: MISS
 ```
+
+The client sends all ICAOs in a single request; the server handles batching to upstream internally. This ensures a stable cache key regardless of airport list ordering.
 
 For METAR proxy with `force=1`, the 2-hour history fetch timer is also reset via `scheduleHistoryFetch()`.
 
@@ -330,9 +336,10 @@ Path 1: Scheduled fetch (every 2 hours)
 
 Path 2: Client-triggered proxy fetch (cache miss)
   proxyMetar() / proxyTaf()
-    → Upstream fetch from aviationweather.gov
-    → Cache the response
-    → Parse JSON, store in history tables
+    → Batch ICAOs into groups of 40
+    → Fetch each batch from aviationweather.gov
+    → Aggregate results, cache combined response (metar:all / taf:all)
+    → Store in history tables
 ```
 
 Both paths use the same `storeMetarSnapshots()` / `storeTafSnapshots()` functions. All inserts are wrapped in explicit `BEGIN`/`COMMIT` transactions with `ROLLBACK` on error.
@@ -487,7 +494,7 @@ init()
   → If no key: show API key dialog
   → If key exists: loadAirports()
       → fetchAirports() (from OpenAIP via proxy, with localStorage 24h cache)
-      → fetchMetar() + fetchTaf() (from AWC via proxy, batches of 40)
+      → fetchMetar() + fetchTaf() (single request each; server batches to AWC internally)
       → displayAirports() (create Leaflet markers)
       → Start 30-minute auto-refresh timer
       → Start 10-second age display update timer
@@ -666,7 +673,7 @@ No `npm install` needed. The only runtime requirement is Node.js >= 22.5.0 (for 
 | `GET /api/data/taf?ids={icaos}&format=json` | Forecasts | Array of TAF objects |
 
 - No API key required
-- Requests are batched in groups of 40 ICAO codes
+- Client sends all ICAOs in one request; server batches to upstream in groups of 40
 - Proxied through server to solve CORS restrictions
 
 ### OpenAIP v2

@@ -556,12 +556,10 @@ async function performHistoryFetch() {
 
   // Also update the in-memory cache so client requests benefit
   if (allMetar.length > 0) {
-    const ids = allMetar.map(m => m.icaoId).join(',');
-    setCache(`metar:${ids}`, 200, JSON.stringify(allMetar));
+    setCache('metar:all', 200, JSON.stringify(allMetar));
   }
   if (allTaf.length > 0) {
-    const ids = allTaf.map(t => t.icaoId).join(',');
-    setCache(`taf:${ids}`, 200, JSON.stringify(allTaf));
+    setCache('taf:all', 200, JSON.stringify(allTaf));
   }
 
   logInfo('HISTORY', `Stored ${metarCount} METARs, ${tafCount} TAFs`, fetchTime.toISOString());
@@ -664,7 +662,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-function proxyMetar(req, res, query) {
+async function proxyMetar(req, res, query) {
   const ids = query.ids || '';
   if (!ids) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -674,7 +672,7 @@ function proxyMetar(req, res, query) {
 
   const force = query.force === '1';
   stats.metar.total++;
-  const cacheKey = `metar:${ids}`;
+  const cacheKey = 'metar:all';
 
   if (force) {
     cache.delete(cacheKey);
@@ -694,45 +692,47 @@ function proxyMetar(req, res, query) {
     return;
   }
 
-  const awcUrl = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
+  const icaoList = ids.split(',');
+  const batchSize = 40;
+  let allResults = [];
 
-  logDebug('METAR', `Fetching from upstream`, awcUrl);
+  try {
+    for (let i = 0; i < icaoList.length; i += batchSize) {
+      const batch = icaoList.slice(i, i + batchSize).join(',');
+      const url = `https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(batch)}&format=json`;
+      logDebug('METAR', `Fetching from upstream`, url);
+      const data = await httpsGetJson(url);
+      if (Array.isArray(data)) allResults.push(...data);
+    }
 
-  https.get(awcUrl, (proxyRes) => {
-    let body = '';
-    proxyRes.on('data', chunk => body += chunk);
-    proxyRes.on('end', () => {
-      const duration = Date.now() - startTime;
-      logDebug('METAR', `Upstream response ${proxyRes.statusCode}`, `${body.length} bytes, ${duration}ms`);
-      if (proxyRes.statusCode === 200) {
-        setCache(cacheKey, proxyRes.statusCode, body);
-        // Store in history
-        try {
-          const parsed = JSON.parse(body);
-          if (Array.isArray(parsed)) storeMetarSnapshots(new Date(), parsed);
-        } catch (e) { /* ignore parse errors */ }
-      }
-      logCall('metar', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
-      res.writeHead(proxyRes.statusCode, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
-        'X-Cache': 'MISS',
-        'X-Fetch-Time': new Date().toISOString(),
-      });
-      res.end(body);
+    const duration = Date.now() - startTime;
+    const body = JSON.stringify(allResults);
+    logDebug('METAR', `Upstream complete`, `${allResults.length} results, ${body.length} bytes, ${duration}ms`);
+
+    setCache(cacheKey, 200, body);
+    storeMetarSnapshots(new Date(), allResults);
+
+    logCall('metar', { time: Date.now(), cached: false, status: 200, bytes: body.length, duration });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
+      'X-Cache': 'MISS',
+      'X-Fetch-Time': new Date().toISOString(),
     });
-  }).on('error', (err) => {
+    res.end(body);
+  } catch (err) {
+    const duration = Date.now() - startTime;
     stats.metar.errors++;
-    logCall('metar', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
+    logCall('metar', { time: Date.now(), cached: false, error: err.message, duration });
     logError('METAR', 'Proxy error', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to fetch METAR data' }));
-  });
+  }
 }
 
-function proxyTaf(req, res, query) {
+async function proxyTaf(req, res, query) {
   const ids = query.ids || '';
   if (!ids) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -742,7 +742,7 @@ function proxyTaf(req, res, query) {
 
   const force = query.force === '1';
   stats.taf.total++;
-  const cacheKey = `taf:${ids}`;
+  const cacheKey = 'taf:all';
 
   if (force) {
     cache.delete(cacheKey);
@@ -759,42 +759,44 @@ function proxyTaf(req, res, query) {
     return;
   }
 
-  const awcUrl = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(ids)}&format=json`;
   const startTime = Date.now();
+  const icaoList = ids.split(',');
+  const batchSize = 40;
+  let allResults = [];
 
-  logDebug('TAF', 'Fetching from upstream', awcUrl);
+  try {
+    for (let i = 0; i < icaoList.length; i += batchSize) {
+      const batch = icaoList.slice(i, i + batchSize).join(',');
+      const url = `https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(batch)}&format=json`;
+      logDebug('TAF', 'Fetching from upstream', url);
+      const data = await httpsGetJson(url);
+      if (Array.isArray(data)) allResults.push(...data);
+    }
 
-  https.get(awcUrl, (proxyRes) => {
-    let body = '';
-    proxyRes.on('data', chunk => body += chunk);
-    proxyRes.on('end', () => {
-      const duration = Date.now() - startTime;
-      logDebug('TAF', `Upstream response ${proxyRes.statusCode}`, `${body.length} bytes, ${duration}ms`);
-      if (proxyRes.statusCode === 200) {
-        setCache(cacheKey, proxyRes.statusCode, body);
-        // Store in history
-        try {
-          const parsed = JSON.parse(body);
-          if (Array.isArray(parsed)) storeTafSnapshots(new Date(), parsed);
-        } catch (e) { /* ignore parse errors */ }
-      }
-      logCall('taf', { time: Date.now(), cached: false, status: proxyRes.statusCode, bytes: body.length, duration });
-      res.writeHead(proxyRes.statusCode, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
-        'X-Cache': 'MISS',
-        'X-Fetch-Time': new Date().toISOString(),
-      });
-      res.end(body);
+    const duration = Date.now() - startTime;
+    const body = JSON.stringify(allResults);
+    logDebug('TAF', `Upstream complete`, `${allResults.length} results, ${body.length} bytes, ${duration}ms`);
+
+    setCache(cacheKey, 200, body);
+    storeTafSnapshots(new Date(), allResults);
+
+    logCall('taf', { time: Date.now(), cached: false, status: 200, bytes: body.length, duration });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'X-Cache, X-Fetch-Time',
+      'X-Cache': 'MISS',
+      'X-Fetch-Time': new Date().toISOString(),
     });
-  }).on('error', (err) => {
+    res.end(body);
+  } catch (err) {
+    const duration = Date.now() - startTime;
     stats.taf.errors++;
-    logCall('taf', { time: Date.now(), cached: false, error: err.message, duration: Date.now() - startTime });
+    logCall('taf', { time: Date.now(), cached: false, error: err.message, duration });
     logError('TAF', 'Proxy error', err.message);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to fetch TAF data' }));
-  });
+  }
 }
 
 function proxyAirports(req, res, query) {
