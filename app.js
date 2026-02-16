@@ -991,24 +991,6 @@ async function init() {
     serverHasKey = config.hasKey;
   } catch (e) { /* server unreachable */ }
 
-  // One-time migration from localStorage to server
-  const legacyKey = localStorage.getItem('openaip_api_key');
-  if (legacyKey && !serverHasKey) {
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: legacyKey }),
-      });
-      const result = await res.json();
-      if (result.ok) {
-        localStorage.removeItem('openaip_api_key');
-        serverHasKey = true;
-      }
-    } catch (e) { /* migration failed, user will re-enter */ }
-  }
-  if (legacyKey && serverHasKey) localStorage.removeItem('openaip_api_key');
-
   if (serverHasKey) {
     overlay.style.display = 'none';
     loadAirports();

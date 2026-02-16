@@ -192,19 +192,6 @@ db.exec(`
   );
 `);
 
-// Migration: add cloud_base column if missing
-try { db.exec(`ALTER TABLE metar_history ADD COLUMN cloud_base INTEGER`); } catch (e) { /* already exists */ }
-
-// Purge duplicate rows (keep earliest fetch per unique observation)
-db.exec(`
-  DELETE FROM metar_history WHERE id NOT IN (
-    SELECT MIN(id) FROM metar_history WHERE report_time IS NOT NULL GROUP BY icao_id, report_time
-  ) AND report_time IS NOT NULL;
-  DELETE FROM taf_history WHERE id NOT IN (
-    SELECT MIN(id) FROM taf_history WHERE valid_from IS NOT NULL GROUP BY icao_id, valid_from
-  ) AND valid_from IS NOT NULL;
-`);
-
 const insertMetarStmt = db.prepare(`
   INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, cloud_base, wx_string, raw_ob, report_time, metar_json)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -220,98 +207,6 @@ const insertTafStmt = db.prepare(`
 const tafExistsStmt = db.prepare(`
   SELECT 1 FROM taf_history WHERE icao_id = ? AND valid_from = ? LIMIT 1
 `);
-
-// Backfill null flt_cat_now from stored taf_json (fix for TAFs fetched before validity start)
-{
-  const nullRows = db.prepare(`SELECT id, fetch_time, taf_json FROM taf_history WHERE flt_cat_now IS NULL AND taf_json IS NOT NULL`).all();
-  if (nullRows.length > 0) {
-    const updateStmt = db.prepare(`UPDATE taf_history SET flt_cat_now = ? WHERE id = ?`);
-    let fixed = 0;
-    db.exec('BEGIN');
-    for (const row of nullRows) {
-      try {
-        const taf = JSON.parse(row.taf_json);
-        const fetchSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
-        const evalTime = (taf.validTimeFrom && fetchSec < taf.validTimeFrom) ? taf.validTimeFrom : fetchSec;
-        const cat = getForecastCategoryFromTaf(taf, evalTime);
-        if (cat) { updateStmt.run(cat, row.id); fixed++; }
-      } catch (e) { /* skip unparseable */ }
-    }
-    db.exec('COMMIT');
-    if (fixed > 0) logInfo('DB', `Backfilled ${fixed} null flt_cat_now values`);
-  }
-}
-
-// Backfill null cloud_base from stored metar_json (lowest cloud base regardless of coverage)
-{
-  const nullRows = db.prepare(`SELECT id, metar_json FROM metar_history WHERE cloud_base IS NULL AND metar_json IS NOT NULL`).all();
-  if (nullRows.length > 0) {
-    const updateStmt = db.prepare(`UPDATE metar_history SET cloud_base = ? WHERE id = ?`);
-    let fixed = 0;
-    db.exec('BEGIN');
-    for (const row of nullRows) {
-      try {
-        const metar = JSON.parse(row.metar_json);
-        const base = getLowestCloudBase(metar.clouds);
-        if (base != null) { updateStmt.run(base, row.id); fixed++; }
-      } catch (e) { /* skip unparseable */ }
-    }
-    db.exec('COMMIT');
-    if (fixed > 0) logInfo('DB', `Backfilled ${fixed} cloud_base values`);
-  }
-}
-
-// Recompute all flt_cat values using Austrian/ICAO thresholds (one-time migration)
-{
-  const hasLegacy = db.prepare(`SELECT 1 FROM metar_history WHERE flt_cat IN ('MVFR','LIFR') LIMIT 1`).get()
-    || db.prepare(`SELECT 1 FROM taf_history WHERE flt_cat_now IN ('MVFR','LIFR') OR flt_cat_2h IN ('MVFR','LIFR') LIMIT 1`).get();
-  if (!hasLegacy) {
-    // Already migrated or no legacy data — skip
-  } else {
-  // METAR: recompute flt_cat from metar_json
-  const metarRows = db.prepare(`SELECT id, metar_json FROM metar_history WHERE metar_json IS NOT NULL`).all();
-  if (metarRows.length > 0) {
-    const updateStmt = db.prepare(`UPDATE metar_history SET flt_cat = ? WHERE id = ?`);
-    let fixed = 0;
-    db.exec('BEGIN');
-    for (const row of metarRows) {
-      try {
-        const m = JSON.parse(row.metar_json);
-        const ceiling = getCeilingFromClouds(m.clouds);
-        const cat = computeFlightCategory(ceiling, m.visib);
-        updateStmt.run(cat, row.id);
-        fixed++;
-      } catch (e) { /* skip unparseable */ }
-    }
-    db.exec('COMMIT');
-    if (fixed > 0) logInfo('DB', `Recomputed ${fixed} METAR flt_cat values (Austrian thresholds)`);
-  }
-
-  // TAF: recompute flt_cat_now/2h/4h/8h/24h from taf_json
-  const tafRows = db.prepare(`SELECT id, fetch_time, taf_json FROM taf_history WHERE taf_json IS NOT NULL`).all();
-  if (tafRows.length > 0) {
-    const updateStmt = db.prepare(`UPDATE taf_history SET flt_cat_now = ?, flt_cat_2h = ?, flt_cat_4h = ?, flt_cat_8h = ?, flt_cat_24h = ? WHERE id = ?`);
-    let fixed = 0;
-    db.exec('BEGIN');
-    for (const row of tafRows) {
-      try {
-        const taf = JSON.parse(row.taf_json);
-        const fetchSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
-        const evalTime = (taf.validTimeFrom && fetchSec < taf.validTimeFrom) ? taf.validTimeFrom : fetchSec;
-        const catNow = getForecastCategoryFromTaf(taf, evalTime);
-        const cat2h = getForecastCategoryFromTaf(taf, fetchSec + 2 * 3600);
-        const cat4h = getForecastCategoryFromTaf(taf, fetchSec + 4 * 3600);
-        const cat8h = getForecastCategoryFromTaf(taf, fetchSec + 8 * 3600);
-        const cat24h = getForecastCategoryFromTaf(taf, fetchSec + 24 * 3600);
-        updateStmt.run(catNow, cat2h, cat4h, cat8h, cat24h, row.id);
-        fixed++;
-      } catch (e) { /* skip unparseable */ }
-    }
-    db.exec('COMMIT');
-    if (fixed > 0) logInfo('DB', `Recomputed ${fixed} TAF flt_cat values (Austrian thresholds)`);
-  }
-  } // end hasLegacy
-}
 
 logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
 
