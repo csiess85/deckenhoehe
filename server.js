@@ -217,6 +217,27 @@ const tafExistsStmt = db.prepare(`
   SELECT 1 FROM taf_history WHERE icao_id = ? AND valid_from = ? LIMIT 1
 `);
 
+// Backfill null flt_cat_now from stored taf_json (fix for TAFs fetched before validity start)
+{
+  const nullRows = db.prepare(`SELECT id, fetch_time, taf_json FROM taf_history WHERE flt_cat_now IS NULL AND taf_json IS NOT NULL`).all();
+  if (nullRows.length > 0) {
+    const updateStmt = db.prepare(`UPDATE taf_history SET flt_cat_now = ? WHERE id = ?`);
+    let fixed = 0;
+    db.exec('BEGIN');
+    for (const row of nullRows) {
+      try {
+        const taf = JSON.parse(row.taf_json);
+        const fetchSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
+        const evalTime = (taf.validTimeFrom && fetchSec < taf.validTimeFrom) ? taf.validTimeFrom : fetchSec;
+        const cat = getForecastCategoryFromTaf(taf, evalTime);
+        if (cat) { updateStmt.run(cat, row.id); fixed++; }
+      } catch (e) { /* skip unparseable */ }
+    }
+    db.exec('COMMIT');
+    if (fixed > 0) logInfo('DB', `Backfilled ${fixed} null flt_cat_now values`);
+  }
+}
+
 logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
 
 // ─── Flight Category Computation (ported from app.js) ───────
@@ -415,7 +436,9 @@ function storeTafSnapshots(fetchTime, tafArray) {
       // Skip if we already have this exact forecast
       const validFrom = t.validTimeFrom ? new Date(t.validTimeFrom * 1000).toISOString() : null;
       if (validFrom && tafExistsStmt.get(t.icaoId, validFrom)) continue;
-      const catNow = getForecastCategoryFromTaf(t, nowSec);
+      // Clamp to validity start so TAFs fetched before they're valid don't get null cat_now
+      const catNowTime = (t.validTimeFrom && nowSec < t.validTimeFrom) ? t.validTimeFrom : nowSec;
+      const catNow = getForecastCategoryFromTaf(t, catNowTime);
       const cat2h = getForecastCategoryFromTaf(t, nowSec + 2 * 3600);
       const cat4h = getForecastCategoryFromTaf(t, nowSec + 4 * 3600);
       const cat8h = getForecastCategoryFromTaf(t, nowSec + 8 * 3600);
