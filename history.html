@@ -898,6 +898,19 @@
       const metarPts = (weatherData?.metar?.[icao]) || [];
       const tafPts = (weatherData?.taf?.[icao]) || [];
 
+      // Shared UTC formatting for chart x-axis (date-fns adapter uses local time)
+      const totalHrs = (chartToDate - chartFromDate) / 3600000;
+      const xTickCallback = (val) => {
+        const d = new Date(val);
+        if (totalHrs > 48) return fmtDate(d);       // "dd/mm HHZ"
+        return fmtUtcHour(d);                         // "HHZ"
+      };
+      const tooltipTitle = (items) => {
+        if (!items.length) return '';
+        const d = new Date(items[0].parsed.x);
+        return fmtUtcShort(d.toISOString());          // "dd.mm HH:MMZ"
+      };
+
       // ── Wind Chart ──
       const windCtx = document.getElementById(`wind-chart-${icao}`);
       if (!windCtx) return;
@@ -957,14 +970,15 @@
           plugins: {
             legend: { position: 'top', labels: { boxWidth: 16, font: { size: 10 } } },
             title: { display: true, text: `${icao} — Wind`, font: { size: 12, weight: '600' }, color: '#1a1a2e' },
+            tooltip: { callbacks: { title: tooltipTitle } },
           },
           scales: {
             x: {
               type: 'time',
               min: chartFromDate?.getTime(),
               max: chartToDate?.getTime(),
-              time: { tooltipFormat: 'dd.MM HH:mm', displayFormats: { hour: 'HH\'Z\'', day: 'dd.MM' } },
-              ticks: { font: { size: 10 } },
+              time: { displayFormats: { hour: 'HH', day: 'dd.MM' } },
+              ticks: { font: { size: 10 }, callback: xTickCallback },
             },
             y: {
               beginAtZero: true,
@@ -1039,14 +1053,15 @@
           plugins: {
             legend: { position: 'top', labels: { boxWidth: 16, font: { size: 10 } } },
             title: { display: true, text: `${icao} — Ceiling`, font: { size: 12, weight: '600' }, color: '#1a1a2e' },
+            tooltip: { callbacks: { title: tooltipTitle } },
           },
           scales: {
             x: {
               type: 'time',
               min: chartFromDate?.getTime(),
               max: chartToDate?.getTime(),
-              time: { tooltipFormat: 'dd.MM HH:mm', displayFormats: { hour: 'HH\'Z\'', day: 'dd.MM' } },
-              ticks: { font: { size: 10 } },
+              time: { displayFormats: { hour: 'HH', day: 'dd.MM' } },
+              ticks: { font: { size: 10 }, callback: xTickCallback },
             },
             y: {
               beginAtZero: true,
