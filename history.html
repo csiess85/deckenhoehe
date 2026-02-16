@@ -899,10 +899,18 @@
       const tafPts = (weatherData?.taf?.[icao]) || [];
 
       // Build tick positions from actual METAR observation times (UTC)
+      // Thin out ticks that would be too close together (< 8% of chart width apart)
       const totalHrs = (chartToDate - chartFromDate) / 3600000;
+      const totalMs = chartToDate - chartFromDate;
       const metarTimes = metarPts.map(p => new Date(p.t).getTime());
-      const utcTicks = metarTimes.map(t => ({ value: t }));
-      const xAfterBuildTicks = (axis) => { axis.ticks = utcTicks; };
+      const minGapMs = totalMs * 0.08; // minimum 8% of range between ticks
+      const thinnedTicks = [];
+      for (let i = 0; i < metarTimes.length; i++) {
+        if (thinnedTicks.length === 0 || metarTimes[i] - thinnedTicks[thinnedTicks.length - 1].value >= minGapMs) {
+          thinnedTicks.push({ value: metarTimes[i] });
+        }
+      }
+      const xAfterBuildTicks = (axis) => { axis.ticks = thinnedTicks; };
       const xTickCallback = (val) => {
         const d = new Date(val);
         if (totalHrs > 48) return fmtDate(d);
