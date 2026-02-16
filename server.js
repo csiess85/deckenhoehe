@@ -1202,10 +1202,19 @@ server.listen(PORT, async () => {
       await refreshAirportList();
     }
     logInfo('HISTORY', `Tracked airports: ${getTrackedIcaoCodes().length}`);
-    logInfo('HISTORY', 'Performing initial weather fetch...');
-    const result = await performHistoryFetch();
-    if (result) {
-      logInfo('SCHEDULER', `Initial fetch complete: ${result.metarCount} METARs, ${result.tafCount} TAFs stored`);
+
+    // Skip initial fetch if last fetch was less than 30 minutes ago
+    const lastFetchRow = db.prepare('SELECT MAX(fetch_time) AS last FROM metar_history').get();
+    const lastFetchAge = lastFetchRow?.last ? Date.now() - new Date(lastFetchRow.last).getTime() : Infinity;
+    const SKIP_THRESHOLD = 30 * 60 * 1000; // 30 minutes
+    if (lastFetchAge < SKIP_THRESHOLD) {
+      logInfo('HISTORY', `Skipping initial fetch (last fetch ${Math.round(lastFetchAge / 60000)}min ago)`);
+    } else {
+      logInfo('HISTORY', 'Performing initial weather fetch...');
+      const result = await performHistoryFetch();
+      if (result) {
+        logInfo('SCHEDULER', `Initial fetch complete: ${result.metarCount} METARs, ${result.tafCount} TAFs stored`);
+      }
     }
   } catch (err) {
     logError('HISTORY', 'Initial fetch failed', err.message);
