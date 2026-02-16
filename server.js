@@ -261,6 +261,58 @@ const tafExistsStmt = db.prepare(`
   }
 }
 
+// Recompute all flt_cat values using Austrian/ICAO thresholds (one-time migration)
+{
+  const hasLegacy = db.prepare(`SELECT 1 FROM metar_history WHERE flt_cat IN ('MVFR','LIFR') LIMIT 1`).get()
+    || db.prepare(`SELECT 1 FROM taf_history WHERE flt_cat_now IN ('MVFR','LIFR') OR flt_cat_2h IN ('MVFR','LIFR') LIMIT 1`).get();
+  if (!hasLegacy) {
+    // Already migrated or no legacy data — skip
+  } else {
+  // METAR: recompute flt_cat from metar_json
+  const metarRows = db.prepare(`SELECT id, metar_json FROM metar_history WHERE metar_json IS NOT NULL`).all();
+  if (metarRows.length > 0) {
+    const updateStmt = db.prepare(`UPDATE metar_history SET flt_cat = ? WHERE id = ?`);
+    let fixed = 0;
+    db.exec('BEGIN');
+    for (const row of metarRows) {
+      try {
+        const m = JSON.parse(row.metar_json);
+        const ceiling = getCeilingFromClouds(m.clouds);
+        const cat = computeFlightCategory(ceiling, m.visib);
+        updateStmt.run(cat, row.id);
+        fixed++;
+      } catch (e) { /* skip unparseable */ }
+    }
+    db.exec('COMMIT');
+    if (fixed > 0) logInfo('DB', `Recomputed ${fixed} METAR flt_cat values (Austrian thresholds)`);
+  }
+
+  // TAF: recompute flt_cat_now/2h/4h/8h/24h from taf_json
+  const tafRows = db.prepare(`SELECT id, fetch_time, taf_json FROM taf_history WHERE taf_json IS NOT NULL`).all();
+  if (tafRows.length > 0) {
+    const updateStmt = db.prepare(`UPDATE taf_history SET flt_cat_now = ?, flt_cat_2h = ?, flt_cat_4h = ?, flt_cat_8h = ?, flt_cat_24h = ? WHERE id = ?`);
+    let fixed = 0;
+    db.exec('BEGIN');
+    for (const row of tafRows) {
+      try {
+        const taf = JSON.parse(row.taf_json);
+        const fetchSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
+        const evalTime = (taf.validTimeFrom && fetchSec < taf.validTimeFrom) ? taf.validTimeFrom : fetchSec;
+        const catNow = getForecastCategoryFromTaf(taf, evalTime);
+        const cat2h = getForecastCategoryFromTaf(taf, fetchSec + 2 * 3600);
+        const cat4h = getForecastCategoryFromTaf(taf, fetchSec + 4 * 3600);
+        const cat8h = getForecastCategoryFromTaf(taf, fetchSec + 8 * 3600);
+        const cat24h = getForecastCategoryFromTaf(taf, fetchSec + 24 * 3600);
+        updateStmt.run(catNow, cat2h, cat4h, cat8h, cat24h, row.id);
+        fixed++;
+      } catch (e) { /* skip unparseable */ }
+    }
+    db.exec('COMMIT');
+    if (fixed > 0) logInfo('DB', `Recomputed ${fixed} TAF flt_cat values (Austrian thresholds)`);
+  }
+  } // end hasLegacy
+}
+
 logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
 
 // ─── Flight Category Computation (ported from app.js) ───────
