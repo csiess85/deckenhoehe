@@ -889,29 +889,31 @@ function handleHistoryTimeline(req, res, query) {
     icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
   }
 
-  // METAR timeline
+  // METAR timeline — use report_time, deduplicate by (icao, report_time)
   const metarResult = {};
   let metarRows;
   if (icaoFilter) {
     const placeholders = icaoFilter.map(() => '?').join(',');
     metarRows = db.prepare(`
-      SELECT icao_id, fetch_time, flt_cat FROM metar_history
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, flt_cat FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      ORDER BY icao_id, fetch_time
+      GROUP BY icao_id, COALESCE(report_time, fetch_time)
+      ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
     metarRows = db.prepare(`
-      SELECT icao_id, fetch_time, flt_cat FROM metar_history
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, flt_cat FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      ORDER BY icao_id, fetch_time
+      GROUP BY icao_id, COALESCE(report_time, fetch_time)
+      ORDER BY icao_id, obs_time
     `).all(from, to);
   }
   for (const row of metarRows) {
     if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
-    metarResult[row.icao_id].push({ t: row.fetch_time, cat: row.flt_cat });
+    metarResult[row.icao_id].push({ t: row.obs_time, cat: row.flt_cat });
   }
 
-  // TAF timeline
+  // TAF timeline — deduplicate by (icao, valid_from)
   const tafResult = {};
   let tafRows;
   if (icaoFilter) {
@@ -919,12 +921,14 @@ function handleHistoryTimeline(req, res, query) {
     tafRows = db.prepare(`
       SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(...icaoFilter, from, to);
   } else {
     tafRows = db.prepare(`
       SELECT icao_id, fetch_time, flt_cat_now, flt_cat_2h, flt_cat_4h, flt_cat_8h, flt_cat_24h FROM taf_history
       WHERE fetch_time >= ? AND fetch_time <= ?
+      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(from, to);
   }
@@ -988,33 +992,35 @@ function handleHistoryWeather(req, res, query) {
     icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
   }
 
-  // METAR weather data — direct from columns (efficient, indexed)
+  // METAR weather data — use report_time (observation time), deduplicate by (icao, report_time)
   const metarResult = {};
   let metarRows;
   if (icaoFilter) {
     const placeholders = icaoFilter.map(() => '?').join(',');
     metarRows = db.prepare(`
-      SELECT icao_id, fetch_time, wdir, wspd, wgst, ceiling
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
       FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
-      ORDER BY icao_id, fetch_time
+      GROUP BY icao_id, COALESCE(report_time, fetch_time)
+      ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
     metarRows = db.prepare(`
-      SELECT icao_id, fetch_time, wdir, wspd, wgst, ceiling
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
       FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
-      ORDER BY icao_id, fetch_time
+      GROUP BY icao_id, COALESCE(report_time, fetch_time)
+      ORDER BY icao_id, obs_time
     `).all(from, to);
   }
   for (const row of metarRows) {
     if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
     metarResult[row.icao_id].push({
-      t: row.fetch_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling
+      t: row.obs_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling
     });
   }
 
-  // TAF weather data — requires JSON parsing + period evaluation
+  // TAF weather data — deduplicate by (icao, valid_from), use fetch_time for period evaluation
   const tafResult = {};
   let tafRows;
   if (icaoFilter) {
@@ -1023,6 +1029,7 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, fetch_time, taf_json
       FROM taf_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(...icaoFilter, from, to);
   } else {
@@ -1030,6 +1037,7 @@ function handleHistoryWeather(req, res, query) {
       SELECT icao_id, fetch_time, taf_json
       FROM taf_history
       WHERE fetch_time >= ? AND fetch_time <= ?
+      GROUP BY icao_id, valid_from
       ORDER BY icao_id, fetch_time
     `).all(from, to);
   }
