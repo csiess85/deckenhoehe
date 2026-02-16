@@ -155,6 +155,7 @@ db.exec(`
     visib        TEXT,
     altim        REAL,
     ceiling      INTEGER,
+    cloud_base   INTEGER,
     wx_string    TEXT,
     raw_ob       TEXT,
     report_time  TEXT,
@@ -191,6 +192,9 @@ db.exec(`
   );
 `);
 
+// Migration: add cloud_base column if missing
+try { db.exec(`ALTER TABLE metar_history ADD COLUMN cloud_base INTEGER`); } catch (e) { /* already exists */ }
+
 // Purge duplicate rows (keep earliest fetch per unique observation)
 db.exec(`
   DELETE FROM metar_history WHERE id NOT IN (
@@ -202,8 +206,8 @@ db.exec(`
 `);
 
 const insertMetarStmt = db.prepare(`
-  INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, wx_string, raw_ob, report_time, metar_json)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, cloud_base, wx_string, raw_ob, report_time, metar_json)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const metarExistsStmt = db.prepare(`
   SELECT 1 FROM metar_history WHERE icao_id = ? AND report_time = ? LIMIT 1
@@ -238,6 +242,25 @@ const tafExistsStmt = db.prepare(`
   }
 }
 
+// Backfill null cloud_base from stored metar_json (lowest cloud base regardless of coverage)
+{
+  const nullRows = db.prepare(`SELECT id, metar_json FROM metar_history WHERE cloud_base IS NULL AND metar_json IS NOT NULL`).all();
+  if (nullRows.length > 0) {
+    const updateStmt = db.prepare(`UPDATE metar_history SET cloud_base = ? WHERE id = ?`);
+    let fixed = 0;
+    db.exec('BEGIN');
+    for (const row of nullRows) {
+      try {
+        const metar = JSON.parse(row.metar_json);
+        const base = getLowestCloudBase(metar.clouds);
+        if (base != null) { updateStmt.run(base, row.id); fixed++; }
+      } catch (e) { /* skip unparseable */ }
+    }
+    db.exec('COMMIT');
+    if (fixed > 0) logInfo('DB', `Backfilled ${fixed} cloud_base values`);
+  }
+}
+
 logInfo('DB', `Weather history DB initialized: ${HISTORY_DB_PATH}`);
 
 // ─── Flight Category Computation (ported from app.js) ───────
@@ -250,6 +273,17 @@ function getCeilingFromClouds(clouds) {
     }
   }
   return null;
+}
+
+function getLowestCloudBase(clouds) {
+  if (!clouds || !Array.isArray(clouds)) return null;
+  let lowest = null;
+  for (const c of clouds) {
+    if (c.base != null && (lowest === null || c.base < lowest)) {
+      lowest = c.base;
+    }
+  }
+  return lowest;
 }
 
 function computeFlightCategory(ceilingFt, visibSM) {
@@ -403,12 +437,13 @@ function storeMetarSnapshots(fetchTime, metarArray) {
       // Skip if we already have this exact observation
       if (m.reportTime && metarExistsStmt.get(m.icaoId, m.reportTime)) continue;
       const ceiling = getCeilingFromClouds(m.clouds);
+      const cloudBase = getLowestCloudBase(m.clouds);
       insertMetarStmt.run(
         ft, m.icaoId, m.fltCat || null,
         m.temp ?? null, m.dewp ?? null,
         m.wdir ?? null, m.wspd ?? null, m.wgst ?? null,
         m.visib != null ? String(m.visib) : null,
-        m.altim ?? null, ceiling,
+        m.altim ?? null, ceiling, cloudBase,
         m.wxString || null, m.rawOb || null,
         m.reportTime || null,
         JSON.stringify(m)
@@ -1041,14 +1076,14 @@ function handleHistoryWeather(req, res, query) {
   if (icaoFilter) {
     const placeholders = icaoFilter.map(() => '?').join(',');
     metarRows = db.prepare(`
-      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base
       FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
       ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
     metarRows = db.prepare(`
-      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base
       FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
       ORDER BY icao_id, obs_time
@@ -1057,7 +1092,7 @@ function handleHistoryWeather(req, res, query) {
   for (const row of metarRows) {
     if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
     metarResult[row.icao_id].push({
-      t: row.obs_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling
+      t: row.obs_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling, cbase: row.cloud_base
     });
   }
 

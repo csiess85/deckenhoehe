@@ -1008,6 +1008,17 @@
         data: {
           datasets: [
             {
+              label: 'METAR Cloud Base (ft)',
+              data: metarPts.filter(p => p.cbase != null).map(p => ({ x: new Date(p.t), y: p.cbase })),
+              borderColor: '#2980b9',
+              backgroundColor: 'rgba(41,128,185,0.08)',
+              borderDash: [5, 3],
+              fill: true,
+              borderWidth: 1.5,
+              pointRadius: 2,
+              tension: 0.2,
+            },
+            {
               label: 'METAR Ceiling (ft)',
               data: metarPts.filter(p => p.ceil != null).map(p => ({ x: new Date(p.t), y: p.ceil })),
               borderColor: '#2980b9',
