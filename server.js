@@ -1060,7 +1060,9 @@ function handleHistoryWeather(req, res, query) {
     try {
       const taf = JSON.parse(row.taf_json);
       const fetchTimeSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
-      const weather = getForecastWeatherFromTaf(taf, fetchTimeSec);
+      // Evaluate at fetchTime, or validTimeFrom if fetched before validity starts
+      const evalTime = Math.max(fetchTimeSec, taf.validTimeFrom || 0);
+      const weather = getForecastWeatherFromTaf(taf, evalTime);
       if (!tafResult[row.icao_id]) tafResult[row.icao_id] = [];
       tafResult[row.icao_id].push({
         t: row.fetch_time,
