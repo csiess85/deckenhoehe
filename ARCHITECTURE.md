@@ -134,6 +134,7 @@ Map<string, { statusCode: number, body: string, time: number }>
 | GET | `/api/stats` | inline | Proxy cache stats, request log (for stats.html) |
 | GET | `/api/history/timeline?icao=all&from=...&to=...` | `handleHistoryTimeline` | METAR + TAF flight categories over time |
 | GET | `/api/history/detail?icao=LOWW&time=...` | `handleHistoryDetail` | Full METAR + TAF at a specific point in time |
+| GET | `/api/history/weather?icao=LOWW&from=...&to=...` | `handleHistoryWeather` | Wind speed/gust/direction + ceiling time series (METAR + TAF) |
 | GET | `/api/history/airports` | `handleHistoryAirports` | All tracked airports with snapshot counts |
 | GET | `/api/history/stats` | `handleHistoryStats` | DB stats: counts, size, range, next fetch timer |
 | GET | `/api/log?n=200&level=...&category=...` | `handleLogApi` | Server log entries (TSV file, newest last) |
@@ -366,6 +367,27 @@ Response:
 ```
 Uses `julianday()` difference to find the closest snapshot to the requested time, so it works even if the exact timestamp doesn't match.
 
+**`GET /api/history/weather`**
+```
+Parameters: ?icao=all|LOWW,LOWI&from=2026-02-15T00:00:00Z&to=2026-02-15T23:59:59Z
+Response:
+{
+  "metar": {
+    "LOWW": [
+      {"t": "2026-02-15T06:00:00.000Z", "wspd": 10, "wgst": null, "wdir": 270, "ceil": 3500},
+      ...
+    ]
+  },
+  "taf": {
+    "LOWW": [
+      {"t": "2026-02-15T06:00:00.000Z", "wspd": 8, "wgst": null, "wdir": 260, "ceil": 4000},
+      ...
+    ]
+  }
+}
+```
+METAR data comes directly from indexed columns (efficient). TAF data is computed server-side by parsing `taf_json` and evaluating `getForecastWeatherFromTaf()` at each `fetch_time`. Used by the wind/ceiling charts in `history.html`.
+
 **`GET /api/history/airports`**
 ```
 Response:
@@ -438,6 +460,7 @@ This worst-case approach is conservative by design: if a TEMPO group predicts IF
 | `getTafPeriodCategory(period)` | Returns flight category for a single TAF period |
 | `worseCat(a, b)` | Returns the more severe of two categories |
 | `getForecastCategoryFromTaf(taf, targetTime)` | Full TAF evaluation at a UNIX timestamp |
+| `getForecastWeatherFromTaf(taf, targetTime)` | Extracts wind (wspd/wgst/wdir) + ceiling from TAF at a UNIX timestamp. Same period traversal as category function but returns weather values instead. TEMPO/PROB: worst-case (highest wind, lowest ceiling). |
 
 ### Functions (client-side, `app.js`)
 
@@ -546,15 +569,18 @@ The map page with Leaflet.js. Structure:
 
 ### `history.html` — Weather History Comparison
 
-Self-contained page (all CSS + JS inline). Structure:
+Self-contained page (all CSS + JS inline). Loads Chart.js v4 + date-fns adapter from CDN. Structure:
 - **Stats cards**: METAR/TAF snapshot counts, history range, DB size, next fetch countdown
 - **Controls**: Airport selector dropdown, time range presets (24h/48h/7d/30d), custom datetime pickers, color legend
-- **Detail panel**: Click-to-expand panel showing full METAR (left) + TAF (right) for a selected point
-- **Timeline section**: Dual-row colored bar per airport:
-  - Top row: **METAR** (actual observed flight category)
-  - Bottom row: **TAF** (what the forecast predicted, using `flt_cat_now`)
+- **Detail panel**: Click-to-expand inline panel showing full METAR (left) + TAF (right) for a selected point
+- **Timeline section**: Per airport:
+  - Dual-row colored bar: top = **METAR** actuals, bottom = **TAF** forecast (`flt_cat_now`)
   - Shared time axis with UTC labels and NOW marker
   - Click any segment to drill down via `/api/history/detail`
+  - **Wind & Ceiling Charts** (toggle per airport, lazy-loaded via `/api/history/weather`):
+    - Wind chart: line graph comparing METAR vs TAF wind speed (solid) and gusts (dashed) in knots
+    - Ceiling chart: line graph comparing METAR vs TAF ceiling (ft AGL) with LIFR/IFR/MVFR threshold lines
+    - Chart instances managed per airport, destroyed on timeline re-render
 
 ### `log.html` — Server Log Viewer
 

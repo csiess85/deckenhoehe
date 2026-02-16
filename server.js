@@ -280,6 +280,52 @@ function getForecastCategoryFromTaf(taf, targetTime) {
   return worstCat;
 }
 
+function getForecastWeatherFromTaf(taf, targetTimeSec) {
+  if (!taf || !taf.fcsts || taf.fcsts.length === 0) return null;
+  if (targetTimeSec < taf.validTimeFrom || targetTimeSec >= taf.validTimeTo) return null;
+
+  const basePeriods = taf.fcsts.filter(f => !f.fcstChange);
+  const changeGroups = taf.fcsts.filter(f => f.fcstChange);
+
+  let result = { wspd: null, wgst: null, wdir: null, ceiling: null };
+
+  // Base forecast period covering targetTime
+  for (const period of basePeriods) {
+    if (period.timeFrom <= targetTimeSec && targetTimeSec < period.timeTo) {
+      result.wspd = period.wspd ?? null;
+      result.wgst = period.wgst ?? null;
+      result.wdir = period.wdir ?? null;
+      result.ceiling = getCeilingFromClouds(period.clouds);
+      break;
+    }
+  }
+
+  // BECMG groups: overwrite values (permanent transitions)
+  for (const cg of changeGroups) {
+    if (cg.fcstChange !== 'BECMG') continue;
+    if (cg.timeFrom <= targetTimeSec) {
+      if (cg.wspd != null) result.wspd = cg.wspd;
+      if (cg.wgst != null) result.wgst = cg.wgst;
+      if (cg.wdir != null) result.wdir = cg.wdir;
+      const becmgCeiling = getCeilingFromClouds(cg.clouds);
+      if (becmgCeiling != null) result.ceiling = becmgCeiling;
+    }
+  }
+
+  // TEMPO/PROB groups: worst case (highest wind, lowest ceiling)
+  for (const cg of changeGroups) {
+    if (cg.fcstChange === 'BECMG') continue;
+    if (cg.timeFrom <= targetTimeSec && targetTimeSec < cg.timeTo) {
+      if (cg.wspd != null && (result.wspd == null || cg.wspd > result.wspd)) result.wspd = cg.wspd;
+      if (cg.wgst != null && (result.wgst == null || cg.wgst > result.wgst)) result.wgst = cg.wgst;
+      const tempoCeiling = getCeilingFromClouds(cg.clouds);
+      if (tempoCeiling != null && (result.ceiling == null || tempoCeiling < result.ceiling)) result.ceiling = tempoCeiling;
+    }
+  }
+
+  return result;
+}
+
 // ─── HTTPS JSON Helper ──────────────────────────────────────
 
 function httpsGetJson(url, headers) {
@@ -928,6 +974,84 @@ function handleHistoryDetail(req, res, query) {
   res.end(JSON.stringify(result));
 }
 
+function handleHistoryWeather(req, res, query) {
+  const from = query.from;
+  const to = query.to;
+  if (!from || !to) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing from/to parameters' }));
+    return;
+  }
+
+  let icaoFilter = null;
+  if (query.icao && query.icao !== 'all') {
+    icaoFilter = query.icao.split(',').map(s => s.trim().toUpperCase());
+  }
+
+  // METAR weather data — direct from columns (efficient, indexed)
+  const metarResult = {};
+  let metarRows;
+  if (icaoFilter) {
+    const placeholders = icaoFilter.map(() => '?').join(',');
+    metarRows = db.prepare(`
+      SELECT icao_id, fetch_time, wdir, wspd, wgst, ceiling
+      FROM metar_history
+      WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(...icaoFilter, from, to);
+  } else {
+    metarRows = db.prepare(`
+      SELECT icao_id, fetch_time, wdir, wspd, wgst, ceiling
+      FROM metar_history
+      WHERE fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(from, to);
+  }
+  for (const row of metarRows) {
+    if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
+    metarResult[row.icao_id].push({
+      t: row.fetch_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling
+    });
+  }
+
+  // TAF weather data — requires JSON parsing + period evaluation
+  const tafResult = {};
+  let tafRows;
+  if (icaoFilter) {
+    const placeholders = icaoFilter.map(() => '?').join(',');
+    tafRows = db.prepare(`
+      SELECT icao_id, fetch_time, taf_json
+      FROM taf_history
+      WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(...icaoFilter, from, to);
+  } else {
+    tafRows = db.prepare(`
+      SELECT icao_id, fetch_time, taf_json
+      FROM taf_history
+      WHERE fetch_time >= ? AND fetch_time <= ?
+      ORDER BY icao_id, fetch_time
+    `).all(from, to);
+  }
+  for (const row of tafRows) {
+    if (!row.taf_json) continue;
+    try {
+      const taf = JSON.parse(row.taf_json);
+      const fetchTimeSec = Math.floor(new Date(row.fetch_time).getTime() / 1000);
+      const weather = getForecastWeatherFromTaf(taf, fetchTimeSec);
+      if (!tafResult[row.icao_id]) tafResult[row.icao_id] = [];
+      tafResult[row.icao_id].push({
+        t: row.fetch_time,
+        wspd: weather?.wspd ?? null, wgst: weather?.wgst ?? null,
+        wdir: weather?.wdir ?? null, ceil: weather?.ceiling ?? null
+      });
+    } catch (e) { /* skip unparseable TAF JSON */ }
+  }
+
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(JSON.stringify({ metar: metarResult, taf: tafResult }));
+}
+
 function handleHistoryAirports(req, res) {
   const rows = db.prepare(`
     SELECT t.icao_id, t.name, t.lat, t.lon,
@@ -1003,6 +1127,8 @@ const server = http.createServer((req, res) => {
     handleHistoryTimeline(req, res, query);
   } else if (parsed.pathname === '/api/history/detail') {
     handleHistoryDetail(req, res, query);
+  } else if (parsed.pathname === '/api/history/weather') {
+    handleHistoryWeather(req, res, query);
   } else if (parsed.pathname === '/api/history/airports') {
     handleHistoryAirports(req, res);
   } else if (parsed.pathname === '/api/history/stats') {
