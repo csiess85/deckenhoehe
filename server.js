@@ -975,7 +975,7 @@ function handleHistoryDetail(req, res, query) {
 
   const metar = db.prepare(`
     SELECT * FROM metar_history WHERE icao_id = ?
-    ORDER BY ABS(julianday(fetch_time) - julianday(?)) LIMIT 1
+    ORDER BY ABS(julianday(COALESCE(report_time, fetch_time)) - julianday(?)) LIMIT 1
   `).get(icao, time);
 
   const taf = db.prepare(`
