@@ -473,6 +473,7 @@
     let currentAirport = 'all';
     let timelineData = null;
     let selectedSegment = null;
+    let currentFrom = null, currentTo = null; // store the time window used by loadTimeline
 
     // ─── Utilities ─────────────────────────────────────────
 
@@ -591,6 +592,8 @@
       }
 
       const icao = currentAirport;
+      currentFrom = from;
+      currentTo = to;
 
       try {
         const res = await fetch(`/api/history/timeline?icao=${encodeURIComponent(icao)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -842,16 +845,9 @@
     }
 
     async function loadWeatherData() {
-      let from, to;
-      const customFrom = document.getElementById('customFrom').value;
-      const customTo = document.getElementById('customTo').value;
-      if (customFrom && customTo) {
-        from = new Date(customFrom).toISOString();
-        to = new Date(customTo).toISOString();
-      } else {
-        to = new Date().toISOString();
-        from = new Date(Date.now() - currentRange * 3600 * 1000).toISOString();
-      }
+      // Reuse the same time window as the timeline bar to keep them in sync
+      const from = currentFrom;
+      const to = currentTo;
       const icao = currentAirport;
       const res = await fetch(`/api/history/weather?icao=${encodeURIComponent(icao)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
       weatherData = await res.json();
