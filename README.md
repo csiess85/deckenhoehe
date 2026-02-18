@@ -2,7 +2,7 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
-Interactive map showing real-time VFR flight conditions for all Austrian airports. Color-coded markers display current and forecast flight categories (VFR, MVFR, IFR, LIFR) based on live METAR and TAF data.
+Interactive map showing real-time VFR flight conditions for all Austrian airports. Color-coded markers display current and forecast flight categories (VFR, IFR) based on ICAO/Austrian standards using live METAR and TAF data.
 
 ## Features
 
@@ -73,14 +73,12 @@ No build tools, no frameworks — vanilla JavaScript with Leaflet.js loaded from
 
 ## Flight Category Criteria
 
-Based on [AWC standards](https://aviationweather.gov/gfa/help/):
+Based on ICAO/Austrian VFR standards (2-tier system):
 
-| Category | Ceiling         | Visibility   | Color  |
-|----------|-----------------|--------------|--------|
-| VFR      | > 3,000 ft AGL  | > 5 SM       | Green  |
-| MVFR     | 1,000–3,000 ft  | 3–5 SM       | Blue   |
-| IFR      | 500–999 ft      | 1–2.99 SM    | Red    |
-| LIFR     | < 500 ft        | < 1 SM       | Purple |
+| Category | Ceiling          | Visibility | Color  |
+|----------|------------------|------------|--------|
+| VFR      | > 1,500 ft AGL   | > 5 km     | Green  |
+| IFR      | ≤ 1,500 ft AGL   | ≤ 5 km     | Red    |
 
 The worse of ceiling and visibility determines the category. Forecast horizons use worst-case analysis (base TAF + any overlapping TEMPO/PROB groups).
 
