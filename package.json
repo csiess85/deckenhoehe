@@ -2,7 +2,10 @@
   "name": "deckenhoehe",
   "version": "1.0.0",
   "description": "Deckenhöhe — Austrian airport VFR weather map with live flight conditions",
-  "author": "Christoph Siess <chs@geekhost.info>",
+  "contributors": [
+    "Christoph Siess <chs@geekhost.info>",
+    "Claude (Anthropic) <noreply@anthropic.com>"
+  ],
   "main": "server.js",
   "license": "CC-BY-NC-SA-4.0",
   "scripts": {
