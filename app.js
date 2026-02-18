@@ -1,4 +1,4 @@
-// Austria Airport VFR Status Map
+// Deckenhöhe — Austria Airport VFR Status Map
 // Uses OpenAIP API v2 for airport data + aviationweather.gov METAR/TAF for live weather
 
 const METAR_PROXY = '/api/metar';
@@ -7,7 +7,7 @@ const AIRPORTS_PROXY = '/api/airports';
 const AUSTRIA_CENTER = [47.85, 16.26]; // LOAV Bad Vöslau
 const AUSTRIA_ZOOM = 10;
 const METAR_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
-const AIRPORT_CACHE_KEY = 'openaip_airports_cache';
+const AIRPORT_CACHE_KEY = 'deckenhoehe_airports_cache';
 const AIRPORT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Airport type labels

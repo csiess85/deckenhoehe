@@ -1,4 +1,4 @@
-# OpenAIP - Austria Airport VFR Status Map
+# Deckenhöhe — Austria Airport VFR Status Map
 
 ## Project Overview
 Austrian airport VFR weather map app showing real-time flight conditions (VFR/MVFR/IFR/LIFR) with forecast horizons (+2h, +4h, +8h, +24h).
@@ -33,5 +33,5 @@ Austrian airport VFR weather map app showing real-time flight conditions (VFR/MV
 - Docker: `docker compose up`
 
 ## GitHub
-- Repo: https://github.com/csiess85/openaip (private)
+- Repo: https://github.com/csiess85/deckenhoehe (private)
 - Account: csiess85

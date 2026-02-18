@@ -1,4 +1,6 @@
-# Austria Airport VFR Status Map
+# Deckenhöhe
+
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
 Interactive map showing real-time VFR flight conditions for all Austrian airports. Color-coded markers display current and forecast flight categories (VFR, MVFR, IFR, LIFR) based on live METAR and TAF data.
 

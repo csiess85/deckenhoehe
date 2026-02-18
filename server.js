@@ -1202,8 +1202,8 @@ const server = http.createServer((req, res) => {
 loadCacheFromDisk();
 
 server.listen(PORT, async () => {
-  console.log(`\n  Austria Airport VFR Status Map`);
-  console.log(`  ==============================`);
+  console.log(`\n  Deckenhöhe — Austria Airport VFR Status Map`);
+  console.log(`  ============================================`);
   console.log(`  Server running at:  http://localhost:${PORT}`);
   console.log(`  Weather history:    http://localhost:${PORT}/history.html`);
   console.log(`  Server log:         http://localhost:${PORT}/log.html`);
