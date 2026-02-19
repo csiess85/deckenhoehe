@@ -474,6 +474,7 @@
     let timelineData = null;
     let selectedSegment = null;
     let currentFrom = null, currentTo = null; // store the time window used by loadTimeline
+    let airportElevations = {}; // icao -> elevation_m
 
     // ─── Utilities ─────────────────────────────────────────
 
@@ -527,6 +528,20 @@
       return `<span class="badge" style="background:${color}">${c || 'N/A'}</span>`;
     }
 
+    function computePressureAltitude(qnhHpa, fieldElevM) {
+      if (qnhHpa == null || fieldElevM == null) return null;
+      const fieldElevFt = fieldElevM * 3.28084;
+      return Math.round((1013.25 - qnhHpa) * 30 + fieldElevFt);
+    }
+
+    function computeDensityAltitude(tempC, qnhHpa, fieldElevM) {
+      if (tempC == null || qnhHpa == null || fieldElevM == null) return null;
+      const fieldElevFt = fieldElevM * 3.28084;
+      const pressureAlt = (1013.25 - qnhHpa) * 30 + fieldElevFt;
+      const isaTemp = 15 - (fieldElevFt / 1000 * 1.98);
+      return Math.round(pressureAlt + 120 * (tempC - isaTemp));
+    }
+
     // ─── Data Fetching ─────────────────────────────────────
 
     async function loadStats() {
@@ -570,6 +585,7 @@
             opt.textContent = `${a.icao_id} - ${a.name} (${a.metar_count}/${a.taf_count})`;
             select.appendChild(opt);
           }
+          if (a.elevation_m != null) airportElevations[a.icao_id] = a.elevation_m;
         }
       } catch (e) {
         console.warn('Failed to load airport list:', e);
@@ -643,11 +659,12 @@
 
         // Chart toggle + canvas placeholders
         html += `<div class="chart-toggle">
-          <button class="chart-toggle-btn" data-icao="${icao}">&#9660; Wind &amp; Ceiling</button>
+          <button class="chart-toggle-btn" data-icao="${icao}">&#9660; Wind, Ceiling &amp; Density Alt.</button>
         </div>
         <div class="charts-container" id="charts-${icao}" style="display:none;">
           <div class="chart-wrapper"><canvas id="wind-chart-${icao}"></canvas></div>
           <div class="chart-wrapper"><canvas id="ceil-chart-${icao}"></canvas></div>
+          <div class="chart-wrapper"><canvas id="da-chart-${icao}"></canvas></div>
         </div>`;
 
         html += `</div>`;
@@ -840,6 +857,7 @@
       for (const [, charts] of chartInstances) {
         charts.wind?.destroy();
         charts.ceiling?.destroy();
+        charts.da?.destroy();
       }
       chartInstances.clear();
     }
@@ -863,12 +881,13 @@
         // Collapse
         container.style.display = 'none';
         btn.classList.remove('expanded');
-        btn.innerHTML = '&#9660; Wind &amp; Ceiling';
+        btn.innerHTML = '&#9660; Wind, Ceiling &amp; Density Alt.';
         // Destroy charts for this airport
         const existing = chartInstances.get(icao);
         if (existing) {
           existing.wind?.destroy();
           existing.ceiling?.destroy();
+          existing.da?.destroy();
           chartInstances.delete(icao);
         }
         return;
@@ -880,10 +899,10 @@
       try {
         if (!weatherData) await loadWeatherData();
         container.style.display = 'block';
-        btn.innerHTML = '&#9650; Wind &amp; Ceiling';
+        btn.innerHTML = '&#9650; Wind, Ceiling &amp; Density Alt.';
         createChartsForAirport(icao);
       } catch (e) {
-        btn.innerHTML = '&#9660; Error loading charts';
+        btn.innerHTML = '&#9660; Wind, Ceiling &amp; Density Alt. (error)';
         btn.classList.remove('expanded');
         container.style.display = 'none';
       }
@@ -895,6 +914,7 @@
       if (existing) {
         existing.wind?.destroy();
         existing.ceiling?.destroy();
+        existing.da?.destroy();
       }
 
       const metarPts = (weatherData?.metar?.[icao]) || [];
@@ -1079,7 +1099,102 @@
         },
       });
 
-      chartInstances.set(icao, { wind: windChart, ceiling: ceilChart });
+      // ── Pressure & Density Altitude Chart ──
+      let daChart = null;
+      const elevM = airportElevations[icao];
+      const daCtx = document.getElementById(`da-chart-${icao}`);
+      if (daCtx && elevM != null) {
+        const fieldElevFt = Math.round(elevM * 3.28084);
+        const paPoints = metarPts
+          .filter(p => p.altim != null)
+          .map(p => ({ x: new Date(p.t), y: computePressureAltitude(p.altim, elevM) }))
+          .filter(p => p.y != null);
+        const daPoints = metarPts
+          .filter(p => p.temp != null && p.altim != null)
+          .map(p => ({ x: new Date(p.t), y: computeDensityAltitude(p.temp, p.altim, elevM) }))
+          .filter(p => p.y != null);
+
+        daChart = new Chart(daCtx, {
+          type: 'line',
+          data: {
+            datasets: [
+              {
+                label: 'Density Altitude (ft)',
+                data: daPoints,
+                borderColor: '#8e44ad',
+                backgroundColor: 'rgba(142, 68, 173, 0.08)',
+                fill: true,
+                borderWidth: 2,
+                pointRadius: 2,
+                tension: 0.2,
+              },
+              {
+                label: 'Pressure Altitude (ft)',
+                data: paPoints,
+                borderColor: '#2980b9',
+                backgroundColor: 'rgba(41, 128, 185, 0.08)',
+                fill: false,
+                borderWidth: 2,
+                pointRadius: 2,
+                tension: 0.2,
+              },
+              {
+                label: `Field Elev (${fieldElevFt.toLocaleString()} ft)`,
+                data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: fieldElevFt }, { x: chartToDate, y: fieldElevFt }] : [],
+                borderColor: '#27ae6088',
+                borderDash: [5, 5],
+                borderWidth: 1.5,
+                pointRadius: 0,
+                fill: false,
+              },
+              {
+                label: `+2000 ft Warning`,
+                data: chartFromDate && chartToDate ? [{ x: chartFromDate, y: fieldElevFt + 2000 }, { x: chartToDate, y: fieldElevFt + 2000 }] : [],
+                borderColor: '#e67e2288',
+                borderDash: [3, 3],
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { right: 0 } },
+            plugins: {
+              legend: { position: 'top', labels: { boxWidth: 16, font: { size: 10 } } },
+              title: { display: true, text: `${icao} — Pressure & Density Altitude`, font: { size: 12, weight: '600' }, color: '#1a1a2e' },
+              tooltip: {
+                callbacks: {
+                  title: tooltipTitle,
+                  label: function(ctx) {
+                    if (ctx.datasetIndex === 0) return `DA: ${ctx.parsed.y.toLocaleString()} ft`;
+                    if (ctx.datasetIndex === 1) return `PA: ${ctx.parsed.y.toLocaleString()} ft`;
+                    return ctx.dataset.label;
+                  }
+                }
+              },
+            },
+            scales: {
+              x: {
+                type: 'time',
+                min: chartFromDate?.getTime(),
+                max: chartToDate?.getTime(),
+                afterBuildTicks: xAfterBuildTicks,
+                ticks: { font: { size: 10 }, callback: xTickCallback, maxRotation: 45, autoSkip: true, maxTicksLimit: 12 },
+              },
+              y: {
+                title: { display: true, text: 'ft', font: { size: 10 } },
+                ticks: { font: { size: 10 } },
+                afterFit(axis) { axis.width = 48; },
+              },
+            },
+          },
+        });
+      }
+
+      chartInstances.set(icao, { wind: windChart, ceiling: ceilChart, da: daChart });
     }
 
     // ─── Event Handlers ────────────────────────────────────

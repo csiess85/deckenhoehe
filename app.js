@@ -120,6 +120,90 @@ function getCategoryLabel(icao) {
   return (cat && FLIGHT_CATEGORIES[cat]) ? FLIGHT_CATEGORIES[cat].label : 'No WX Data';
 }
 
+// ─── Pressure & Density Altitude Computation ──────────────
+function computePressureAltitude(qnhHpa, fieldElevM) {
+  if (qnhHpa == null || fieldElevM == null) return null;
+  const fieldElevFt = fieldElevM * 3.28084;
+  return Math.round((1013.25 - qnhHpa) * 30 + fieldElevFt);
+}
+
+function computeDensityAltitude(tempC, qnhHpa, fieldElevM) {
+  if (tempC == null || qnhHpa == null || fieldElevM == null) return null;
+  const fieldElevFt = fieldElevM * 3.28084;
+  const pressureAlt = (1013.25 - qnhHpa) * 30 + fieldElevFt;
+  const isaTemp = 15 - (fieldElevFt / 1000 * 1.98);
+  return Math.round(pressureAlt + 120 * (tempC - isaTemp));
+}
+
+// ─── Civil Twilight Computation (NOAA algorithm) ──────────
+function computeSunTimes(lat, lon, date) {
+  // Returns { sunrise, sunset, bcet, ecet } as Date objects (UTC)
+  // bcet = Begin Civil Evening Twilight (= sunset)
+  // ecet = End Civil Evening Twilight (sun at -6°)
+  // Also: bcmt = Begin Civil Morning Twilight (sun at -6°, dawn)
+  // Also: ecmt = End Civil Morning Twilight (= sunrise)
+  const rad = Math.PI / 180;
+  const deg = 180 / Math.PI;
+
+  const y = date.getUTCFullYear();
+  const m = date.getUTCMonth() + 1;
+  const d = date.getUTCDate();
+
+  // Julian day
+  const a = Math.floor((14 - m) / 12);
+  const yy = y + 4800 - a;
+  const mm = m + 12 * a - 3;
+  const jd = d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4)
+    - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045 + 0.5 - 0.5; // noon UT
+
+  const n = jd - 2451545.0; // days since J2000.0
+  const L = (280.460 + 0.9856474 * n) % 360; // mean longitude
+  const g = (357.528 + 0.9856003 * n) % 360; // mean anomaly
+  const lambda = L + 1.915 * Math.sin(g * rad) + 0.020 * Math.sin(2 * g * rad); // ecliptic lon
+  const epsilon = 23.439 - 0.0000004 * n; // obliquity
+  const sinDec = Math.sin(epsilon * rad) * Math.sin(lambda * rad);
+  const decl = Math.asin(sinDec); // declination (radians)
+
+  // Equation of time (minutes)
+  const RA = Math.atan2(Math.cos(epsilon * rad) * Math.sin(lambda * rad), Math.cos(lambda * rad));
+  const eot = (L * rad - RA) * deg;
+  const eotMin = ((eot + 180) % 360 - 180) * 4; // convert to minutes
+
+  function hourAngle(elevDeg) {
+    const cosH = (Math.sin(elevDeg * rad) - Math.sin(lat * rad) * sinDec)
+      / (Math.cos(lat * rad) * Math.cos(decl));
+    if (cosH > 1 || cosH < -1) return null; // never rises/sets
+    return Math.acos(cosH) * deg;
+  }
+
+  function timeFromHA(ha, rising) {
+    const solarNoonMin = 720 - lon * 4 - eotMin;
+    const offsetMin = rising ? -ha * 4 : ha * 4;
+    const utcMin = solarNoonMin + offsetMin;
+    const result = new Date(date);
+    result.setUTCHours(0, 0, 0, 0);
+    result.setUTCMinutes(Math.round(utcMin));
+    return result;
+  }
+
+  const haSun = hourAngle(-0.833); // sunrise/sunset (refraction-corrected)
+  const haCivil = hourAngle(-6);   // civil twilight
+
+  return {
+    sunrise: haSun != null ? timeFromHA(haSun, true) : null,
+    sunset: haSun != null ? timeFromHA(haSun, false) : null,
+    bcmt: haCivil != null ? timeFromHA(haCivil, true) : null,  // dawn
+    ecmt: haSun != null ? timeFromHA(haSun, true) : null,       // = sunrise
+    bcet: haSun != null ? timeFromHA(haSun, false) : null,      // = sunset
+    ecet: haCivil != null ? timeFromHA(haCivil, false) : null,  // dusk
+  };
+}
+
+function fmtUtcTime(d) {
+  if (!d) return '—';
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0') + ' UTC';
+}
+
 // ─── TAF Flight Category for a Forecast Period ─────────────
 
 function getTafPeriodCategory(period) {
@@ -591,6 +675,22 @@ function buildPopupContent(airport) {
       html += `<div class="detail-row"><span class="detail-label">QNH</span><span class="detail-value">${Math.round(metar.altim)} hPa</span></div>`;
     }
 
+    if (metar.altim != null && elev && elev.value != null) {
+      const pa = computePressureAltitude(metar.altim, elev.value);
+      if (pa != null) {
+        html += `<div class="detail-row"><span class="detail-label">Press. Alt.</span><span class="detail-value">${pa.toLocaleString()} ft</span></div>`;
+      }
+      if (metar.temp != null) {
+        const da = computeDensityAltitude(metar.temp, metar.altim, elev.value);
+        if (da != null) {
+          const fieldElevFt = Math.round(elev.value * 3.28084);
+          const diff = da - fieldElevFt;
+          const warnStyle = diff > 2000 ? ' style="color:#e67e22;font-weight:700"' : '';
+          html += `<div class="detail-row"><span class="detail-label">Density Alt.</span><span class="detail-value"${warnStyle}>${da.toLocaleString()} ft</span></div>`;
+        }
+      }
+    }
+
     if (metar.wxString) {
       html += `<div class="detail-row"><span class="detail-label">Weather</span><span class="detail-value">${metar.wxString}</span></div>`;
     }
@@ -624,6 +724,14 @@ function buildPopupContent(airport) {
     const lat = typeof coords[1] === 'number' ? coords[1].toFixed(4) : coords[1];
     const lon = typeof coords[0] === 'number' ? coords[0].toFixed(4) : coords[0];
     html += `<div class="detail-row"><span class="detail-label">Position</span><span class="detail-value">${lat}N, ${lon}E</span></div>`;
+
+    const sunTimes = computeSunTimes(parseFloat(lat), parseFloat(lon), new Date());
+    if (sunTimes.sunrise && sunTimes.sunset) {
+      html += `<div class="detail-row"><span class="detail-label">Sunrise / Set</span><span class="detail-value">${fmtUtcTime(sunTimes.sunrise)} / ${fmtUtcTime(sunTimes.sunset)}</span></div>`;
+    }
+    if (sunTimes.bcmt && sunTimes.ecet) {
+      html += `<div class="detail-row"><span class="detail-label">Civil Twilight</span><span class="detail-value">${fmtUtcTime(sunTimes.bcmt)} — ${fmtUtcTime(sunTimes.ecet)}</span></div>`;
+    }
   }
 
   if (airport.runways && airport.runways.length > 0) {

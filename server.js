@@ -188,9 +188,13 @@ db.exec(`
     name       TEXT,
     lat        REAL,
     lon        REAL,
+    elevation_m REAL,
     updated_at TEXT NOT NULL
   );
 `);
+
+// Add elevation_m column to existing databases (safe to fail if already exists)
+try { db.exec('ALTER TABLE tracked_airports ADD COLUMN elevation_m REAL'); } catch (e) {}
 
 const insertMetarStmt = db.prepare(`
   INSERT INTO metar_history (fetch_time, icao_id, flt_cat, temp, dewp, wdir, wspd, wgst, visib, altim, ceiling, cloud_base, wx_string, raw_ob, report_time, metar_json)
@@ -464,14 +468,14 @@ async function refreshAirportList() {
 
     // Store in tracked_airports
     const upsert = db.prepare(`
-      INSERT OR REPLACE INTO tracked_airports (icao_id, name, lat, lon, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO tracked_airports (icao_id, name, lat, lon, elevation_m, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
     const now = new Date().toISOString();
     db.exec('BEGIN');
     for (const a of filtered) {
       const coords = a.geometry?.coordinates;
-      upsert.run(a.icaoCode, a.name || '', coords?.[1] ?? null, coords?.[0] ?? null, now);
+      upsert.run(a.icaoCode, a.name || '', coords?.[1] ?? null, coords?.[0] ?? null, a.elevation?.value ?? null, now);
     }
     db.exec('COMMIT');
 
@@ -498,6 +502,12 @@ async function performHistoryFetch() {
   if (icaoCodes.length === 0) {
     logDebug('HISTORY', 'No tracked airports, refreshing list...');
     icaoCodes = await refreshAirportList();
+  }
+  // Backfill elevation data if missing (one-time after schema migration)
+  const missingElev = db.prepare('SELECT 1 FROM tracked_airports WHERE elevation_m IS NULL LIMIT 1').get();
+  if (missingElev) {
+    logInfo('HISTORY', 'Backfilling elevation data for tracked airports...');
+    await refreshAirportList();
   }
   if (icaoCodes.length === 0) {
     logWarn('HISTORY', 'No airports to fetch weather for');
@@ -1017,14 +1027,14 @@ function handleHistoryWeather(req, res, query) {
   if (icaoFilter) {
     const placeholders = icaoFilter.map(() => '?').join(',');
     metarRows = db.prepare(`
-      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base, temp, altim
       FROM metar_history
       WHERE icao_id IN (${placeholders}) AND fetch_time >= ? AND fetch_time <= ?
       ORDER BY icao_id, obs_time
     `).all(...icaoFilter, from, to);
   } else {
     metarRows = db.prepare(`
-      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base
+      SELECT icao_id, COALESCE(report_time, fetch_time) AS obs_time, wdir, wspd, wgst, ceiling, cloud_base, temp, altim
       FROM metar_history
       WHERE fetch_time >= ? AND fetch_time <= ?
       ORDER BY icao_id, obs_time
@@ -1033,7 +1043,8 @@ function handleHistoryWeather(req, res, query) {
   for (const row of metarRows) {
     if (!metarResult[row.icao_id]) metarResult[row.icao_id] = [];
     metarResult[row.icao_id].push({
-      t: row.obs_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling, cbase: row.cloud_base
+      t: row.obs_time, wspd: row.wspd, wgst: row.wgst, wdir: row.wdir, ceil: row.ceiling, cbase: row.cloud_base,
+      temp: row.temp, altim: row.altim
     });
   }
 
@@ -1097,7 +1108,7 @@ function handleHistoryWeather(req, res, query) {
 
 function handleHistoryAirports(req, res) {
   const rows = db.prepare(`
-    SELECT t.icao_id, t.name, t.lat, t.lon,
+    SELECT t.icao_id, t.name, t.lat, t.lon, t.elevation_m,
       (SELECT COUNT(*) FROM metar_history m WHERE m.icao_id = t.icao_id) as metar_count,
       (SELECT COUNT(*) FROM taf_history f WHERE f.icao_id = t.icao_id) as taf_count
     FROM tracked_airports t
